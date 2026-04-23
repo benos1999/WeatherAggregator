@@ -345,7 +345,7 @@ if __name__ == "__main__":
     os.makedirs('data', exist_ok=True)
 
     db_inits = {
-        'data/observations.db': "CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        '/data/observations.db': "CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "Date DATE, "
         "Time TIME, "
         "city TEXT, "
@@ -355,7 +355,7 @@ if __name__ == "__main__":
         "MaxRainfall REAL, "
         "MinRainfall REAL, "
         "AvgRainfall REAL);",
-        'data/hourly_forecast.db': "CREATE TABLE IF NOT EXISTS hourly_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        '/data/hourly_forecast.db': "CREATE TABLE IF NOT EXISTS hourly_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "Date DATE, "
         "Time TIME, "
         "city TEXT, "
@@ -366,7 +366,7 @@ if __name__ == "__main__":
         "WindDirection REAL, "
         "RainProbability REAL, "
         "RainVolume REAL);",
-        'data/daily_forecast.db': "CREATE TABLE IF NOT EXISTS daily_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        '/data/daily_forecast.db': "CREATE TABLE IF NOT EXISTS daily_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "Date DATE, "
         "city TEXT, "
         "Source TEXT, "
@@ -383,14 +383,11 @@ if __name__ == "__main__":
             with sqlite3.connect(db_path) as con:
                 con.executescript(ddl)
     
-
-
-
     # Commit forecast and observation data to databases
 
-    con_observations = sqlite3.connect('data/observations.db')
-    con_hourly = sqlite3.connect('data/hourly_forecast.db')
-    con_daily = sqlite3.connect('data/daily_forecast.db')
+    con_observations = sqlite3.connect('/data/observations.db')
+    con_hourly = sqlite3.connect('/data/hourly_forecast.db')
+    con_daily = sqlite3.connect('/data/daily_forecast.db')
 
     
 # Define sources and their parsing functions
