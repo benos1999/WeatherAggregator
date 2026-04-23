@@ -6,8 +6,8 @@ import subprocess
 def job():
        subprocess.run(["python", "weather_api_export.py"])
 
-schedule.every().hour.do(job)
 
+schedule.every().hour.at(":01").do(job)
 while True:
        schedule.run_pending()
        time.sleep(60)
