@@ -2,3 +2,5 @@ requests
 pandas
 python-dotenv
 schedule
+sqlalchemy
+psycopg2-binary

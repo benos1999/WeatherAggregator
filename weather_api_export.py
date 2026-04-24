@@ -3,7 +3,7 @@ import requests
 import time
 import sys
 import pandas as pd
-import sqlite3
+from sqlalchemy import create_engine, text
 from statistics import mean
 import logging as log
 from dotenv import load_dotenv
@@ -342,55 +342,57 @@ if __name__ == "__main__":
 
     # DataBase initialisation if not already created
 
-    os.makedirs('data', exist_ok=True)
+    engine = create_engine(os.environ["DATABASE_URL"])
 
-    db_inits = {
-        '/data/observations.db': "CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "Date DATE, "
-        "Time TIME, "
-        "city TEXT, "
-        "Temperature REAL, "
-        "WindSpeed REAL, "
-        "WindDirection REAL, "
-        "MaxRainfall REAL, "
-        "MinRainfall REAL, "
-        "AvgRainfall REAL);",
-        '/data/hourly_forecast.db': "CREATE TABLE IF NOT EXISTS hourly_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "Date DATE, "
-        "Time TIME, "
-        "city TEXT, "
-        "Source TEXT, "
-        "ForecastTaken DATETIME, "
-        "Temperature REAL, "
-        "WindSpeed REAL, "
-        "WindDirection REAL, "
-        "RainProbability REAL, "
-        "RainVolume REAL);",
-        '/data/daily_forecast.db': "CREATE TABLE IF NOT EXISTS daily_forecast (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "Date DATE, "
-        "city TEXT, "
-        "Source TEXT, "
-        "ForecastTaken DATETIME, "
-        "MinTemperature REAL, "
-        "MaxTemperature REAL, "
-        "WindSpeed REAL, "
-        "WindDirection REAL, "
-        "RainProbability REAL, "
-        "RainVolume REAL);",
-    }
-    for db_path, ddl in db_inits.items():
-        if not os.path.exists(db_path):
-            with sqlite3.connect(db_path) as con:
-                con.executescript(ddl)
+    with engine.connect() as con:
+        con.execute(text("""
+            CREATE TABLE IF NOT EXISTS observations (
+                id SERIAL PRIMARY KEY,
+                "Date" DATE,
+                "Time" TIME,
+                city TEXT,
+                "Temperature" REAL,
+                "WindSpeed" REAL,
+                "WindDirection" REAL,
+                "MaxRainfall" REAL,
+                "MinRainfall" REAL,
+                "AvgRainfall" REAL
+            )
+        """))
+        con.execute(text("""
+            CREATE TABLE IF NOT EXISTS hourly_forecast (
+                id SERIAL PRIMARY KEY,
+                "Date" DATE,
+                "Time" TIME,
+                city TEXT,
+                "Source" TEXT,
+                "ForecastTaken" TIMESTAMP,
+                "Temperature" REAL,
+                "WindSpeed" REAL,
+                "WindDirection" REAL,
+                "RainProbability" REAL,
+                "RainVolume" REAL
+            )
+        """))
+        con.execute(text("""
+            CREATE TABLE IF NOT EXISTS daily_forecast (
+                id SERIAL PRIMARY KEY,
+                "Date" DATE,
+                city TEXT,
+                "Source" TEXT,
+                "ForecastTaken" TIMESTAMP,
+                "MinTemperature" REAL,
+                "MaxTemperature" REAL,
+                "WindSpeed" REAL,
+                "WindDirection" REAL,
+                "RainProbability" REAL,
+                "RainVolume" REAL
+            )
+        """))
+        con.commit()
     
     # Commit forecast and observation data to databases
 
-    con_observations = sqlite3.connect('/data/observations.db')
-    con_hourly = sqlite3.connect('/data/hourly_forecast.db')
-    con_daily = sqlite3.connect('/data/daily_forecast.db')
-
-    
-# Define sources and their parsing functions
     hourly_sources = [
         ('AccuWeather', parse_hourly_accuweather),
         ('OpenMeteo-ECMWF', parse_hourly_openmeteo),
@@ -405,49 +407,46 @@ if __name__ == "__main__":
         ('MetOffice', parse_daily_metoffice)
         ]
 
-    for city in locations.keys():
-        try:
-            get_hourly_data(city).to_sql("observations", con_observations, if_exists='append', index=False)
-        except Exception as e:
-            log.warning(f"Exception occurred while fetching and storing observations for city {city}: {e}", exc_info=True)
-
-        for source, parser in hourly_sources:
+    with engine.connect() as con:
+        for city in locations.keys():
             try:
-                parser(retrieve_forecast(*get_params('hourly', city, source))).assign(Source=source, city=city).to_sql("hourly_forecast", con_hourly, if_exists='append', index=False)
+                get_hourly_data(city).to_sql("observations", con, if_exists='append', index=False)
             except Exception as e:
-                log.warning(f"Exception occurred while fetching and storing hourly forecast for city {city}: {e}", exc_info=True)
+                log.warning(f"Exception occurred while fetching and storing observations for city {city}: {e}", exc_info=True)
 
-        for source, parser in daily_sources:
-            try:
-                parser(retrieve_forecast(*get_params('daily', city, source))).assign(Source=source, city=city).to_sql("daily_forecast", con_daily, if_exists='append', index=False)
-            except Exception as e:
-                log.warning(f"Exception occurred while fetching and storing daily forecast for city {city}: {e}", exc_info=True)
+            for source, parser in hourly_sources:
+                try:
+                    parser(retrieve_forecast(*get_params('hourly', city, source))).assign(Source=source, city=city).to_sql("hourly_forecast", con, if_exists='append', index=False)
+                except Exception as e:
+                    log.warning(f"Exception occurred while fetching and storing hourly forecast for city {city}: {e}", exc_info=True)
+
+            for source, parser in daily_sources:
+                try:
+                    parser(retrieve_forecast(*get_params('daily', city, source))).assign(Source=source, city=city).to_sql("daily_forecast", con, if_exists='append', index=False)
+                except Exception as e:
+                    log.warning(f"Exception occurred while fetching and storing daily forecast for city {city}: {e}", exc_info=True)
+        con.commit()
     log.info(f"Data successfully retrieved and stored in database.")
 
     # Delete forescassts older than 21 days, allowning a 7 day buffer for late forecasts to be added
 
-    cur_observations = con_observations.cursor()
-    cur_hourly = con_hourly.cursor()
-    cur_daily = con_daily.cursor()
-
-    cur_observations.execute("DELETE FROM observations WHERE Date < DATETIME('now', '-21 days')")
-    cur_hourly.execute("DELETE FROM hourly_forecast WHERE ForecastTaken < DATETIME('now', '-21 days')")
-    cur_daily.execute("DELETE FROM daily_forecast WHERE ForecastTaken < DATETIME('now', '-21 days')")
-
+    with engine.connect() as con:
+        con.execute(text("DELETE FROM observations WHERE \"Date\" < NOW() - INTERVAL '21 days'"))
+        con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '21 days'"))
+        con.execute(text("DELETE FROM daily_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '21 days'"))
+        con.commit()
     
 
-    if time.strftime("%H:00:00", time.localtime()) == '01:00:00': 
-        today = time.strftime("%Y-%m-%d" ,time.localtime())
-        rainfall = con_hourly.execute(f"SELECT SUM(RainVolume) FROM hourly_forecast WHERE source = 'MetOffice' AND Date = DATE({today},'-1 days')").fetchone()[0]
-        if rainfall is not None:
-            con_daily.execute(f"UPDATE daily_forecast SET RainVolume = {rainfall} WHERE Date = DATE({today},'-1 days')")
-        else:
-            log.warning(f"ValueError occurred while updating daily rainfall for {today}.", exc_info=True)
+    if time.strftime("%H", time.localtime()) == '01':
+        today = time.strftime("%Y-%m-%d", time.localtime())
+        with engine.connect() as con:
+            con.execute(text(f"""
+                UPDATE daily_forecast 
+                SET "RainVolume" = (
+                    SELECT SUM("RainVolume") FROM hourly_forecast 
+                    WHERE "Source" = 'MetOffice' AND "Date" = CURRENT_DATE - INTERVAL '1 day'
+                )
+                WHERE "Date" = CURRENT_DATE - INTERVAL '1 day'
+            """))
+            con.commit()
 
-    con_observations.commit()
-    con_hourly.commit()
-    con_daily.commit()
-
-    con_observations.close()
-    con_hourly.close()
-    con_daily.close()
