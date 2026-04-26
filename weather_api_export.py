@@ -353,7 +353,7 @@ if __name__ == "__main__":
                 city TEXT,
                 "Temperature" REAL,
                 "WindSpeed" REAL,
-                "WindDirection" REAL,
+                "WindDirection" TEXT,
                 "MaxRainfall" REAL,
                 "MinRainfall" REAL,
                 "AvgRainfall" REAL
@@ -432,7 +432,7 @@ if __name__ == "__main__":
 
     with engine.connect() as con:
         con.execute(text("DELETE FROM observations WHERE \"Date\" < NOW() - INTERVAL '21 days'"))
-        con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '21 days'"))
+        con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '7 days'"))
         con.execute(text("DELETE FROM daily_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '21 days'"))
         con.commit()
     
