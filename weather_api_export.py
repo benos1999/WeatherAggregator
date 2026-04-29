@@ -350,7 +350,7 @@ if __name__ == "__main__":
                 id SERIAL PRIMARY KEY,
                 "Date" DATE,
                 "Time" TIME,
-                city TEXT,
+                "city" TEXT,
                 "Temperature" REAL,
                 "WindSpeed" REAL,
                 "WindDirection" TEXT,
@@ -364,8 +364,8 @@ if __name__ == "__main__":
                 id SERIAL PRIMARY KEY,
                 "Date" DATE,
                 "Time" TIME,
-                city TEXT,
-                "Source" TEXT,
+                "city" TEXT,
+                "model" TEXT,
                 "ForecastTaken" TIMESTAMP,
                 "Temperature" REAL,
                 "WindSpeed" REAL,
@@ -378,8 +378,8 @@ if __name__ == "__main__":
             CREATE TABLE IF NOT EXISTS daily_forecast (
                 id SERIAL PRIMARY KEY,
                 "Date" DATE,
-                city TEXT,
-                "Source" TEXT,
+                "city" TEXT,
+                "model" TEXT,
                 "ForecastTaken" TIMESTAMP,
                 "MinTemperature" REAL,
                 "MaxTemperature" REAL,
@@ -416,13 +416,13 @@ if __name__ == "__main__":
 
             for source, parser in hourly_sources:
                 try:
-                    parser(retrieve_forecast(*get_params('hourly', city, source))).assign(Source=source, city=city).to_sql("hourly_forecast", con, if_exists='append', index=False)
+                    parser(retrieve_forecast(*get_params('hourly', city, source))).assign(Model=source, city=city).to_sql("hourly_forecast", con, if_exists='append', index=False)
                 except Exception as e:
                     log.warning(f"Exception occurred while fetching and storing hourly forecast for city {city}: {e}", exc_info=True)
 
             for source, parser in daily_sources:
                 try:
-                    parser(retrieve_forecast(*get_params('daily', city, source))).assign(Source=source, city=city).to_sql("daily_forecast", con, if_exists='append', index=False)
+                    parser(retrieve_forecast(*get_params('daily', city, source))).assign(Model=source, city=city).to_sql("daily_forecast", con, if_exists='append', index=False)
                 except Exception as e:
                     log.warning(f"Exception occurred while fetching and storing daily forecast for city {city}: {e}", exc_info=True)
         con.commit()
@@ -444,7 +444,7 @@ if __name__ == "__main__":
                 UPDATE daily_forecast 
                 SET "RainVolume" = (
                     SELECT SUM("RainVolume") FROM hourly_forecast 
-                    WHERE "Source" = 'MetOffice' AND "Date" = CURRENT_DATE - INTERVAL '1 day'
+                    WHERE "Model" = 'MetOffice' AND "Date" = CURRENT_DATE - INTERVAL '1 day'
                 )
                 WHERE "Date" = CURRENT_DATE - INTERVAL '1 day'
             """))
