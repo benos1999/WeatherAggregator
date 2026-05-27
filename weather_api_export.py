@@ -81,7 +81,8 @@ def get_params(timestep,city, source):
             if timestep == 'hourly':
                 params.update({
                     "hourly": ["temperature_2m", "precipitation_probability", "rain", "wind_speed_10m", "wind_direction_10m"],
-                    "forecast_days": 2
+                    "forecast_days": 2,
+                    "timezone": "GMT"
                 })
             elif timestep == 'daily':
                 params.update({
@@ -242,6 +243,9 @@ def get_hourly_data(city):
 def parse_hourly_accuweather(raw_forecast_data):
     temp_df = pd.DataFrame(raw_forecast_data)
     _dt = pd.to_datetime(temp_df['DateTime'], format='ISO8601')
+    mask = (_dt.dt.tz_convert('UTC').dt.tz_localize(None) >= pd.Timestamp(hour_now)).to_numpy()
+    temp_df = temp_df[mask].reset_index(drop=True)
+    _dt = _dt[mask].reset_index(drop=True)
     hourly_accuweather = pd.DataFrame()
     hourly_accuweather['Date'] = _dt.dt.date
     hourly_accuweather['Time'] = _dt.dt.time
@@ -289,9 +293,12 @@ open_meteo_cols = {"temperature_2m": "Temperature",
         "time":"Time"}
 
 def parse_hourly_openmeteo(raw_forecast_data):
- 
+
     hourly_OpenMeteo = pd.DataFrame(raw_forecast_data['hourly']).rename(mapper=open_meteo_cols, axis=1)
     _dt = pd.to_datetime(hourly_OpenMeteo['Time'])
+    mask = (_dt >= pd.Timestamp(hour_now)).to_numpy()
+    hourly_OpenMeteo = hourly_OpenMeteo[mask].reset_index(drop=True)
+    _dt = _dt[mask].reset_index(drop=True)
     hourly_OpenMeteo['Date'] = _dt.dt.date
     hourly_OpenMeteo['Time'] = _dt.dt.time
     hourly_OpenMeteo['ForecastTaken'] = hour_now
@@ -321,6 +328,9 @@ def parse_hourly_metoffice(raw_forecast_data):
     data = raw_forecast_data['features'][0]['properties']['timeSeries']
     hourly_MetOffice = pd.DataFrame(data)[['time','screenTemperature', 'windSpeed10m','windDirectionFrom10m','totalPrecipAmount','probOfPrecipitation']].rename(mapper = metoffice_cols, axis=1)
     _dt = pd.to_datetime(hourly_MetOffice['Time'], format='ISO8601')
+    mask = (_dt.dt.tz_convert('UTC').dt.tz_localize(None) >= pd.Timestamp(hour_now)).to_numpy()
+    hourly_MetOffice = hourly_MetOffice[mask].reset_index(drop=True)
+    _dt = _dt[mask].reset_index(drop=True)
     hourly_MetOffice['Date'] = _dt.dt.date
     hourly_MetOffice['Time'] = _dt.dt.time
     hourly_MetOffice['ForecastTaken'] = hour_now
@@ -428,25 +438,36 @@ if __name__ == "__main__":
         con.commit()
     log.info(f"Data successfully retrieved and stored in database.")
 
-    # Delete forescassts older than 21 days, allowning a 7 day buffer for late forecasts to be added
+    # Retain 1 year of all data to support ensemble model training with full
+    # seasonal cycle and forecast-evolution features.
 
     with engine.connect() as con:
-        con.execute(text("DELETE FROM observations WHERE \"Date\" < NOW() - INTERVAL '21 days'"))
-        con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '7 days'"))
-        con.execute(text("DELETE FROM daily_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '21 days'"))
+        con.execute(text("DELETE FROM observations WHERE \"Date\" < NOW() - INTERVAL '365 days'"))
+        con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '365 days'"))
+        con.execute(text("DELETE FROM daily_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '365 days'"))
         con.commit()
     
 
     if time.strftime("%H", time.localtime()) == '01':
-        today = time.strftime("%Y-%m-%d", time.localtime())
+        # Populate yesterday's MetOffice daily RainVolume by summing its hourly forecasts.
+        # Correlated by (city, ForecastTaken) so each daily row gets the sum of its OWN
+        # hourly forecasts, and scoped to Model = 'MetOffice' so we don't overwrite the
+        # other sources' API-provided daily totals.
         with engine.connect() as con:
-            con.execute(text(f"""
-                UPDATE daily_forecast 
-                SET "RainVolume" = (
-                    SELECT SUM("RainVolume") FROM hourly_forecast 
-                    WHERE "Model" = 'MetOffice' AND "Date" = CURRENT_DATE - INTERVAL '1 day'
-                )
-                WHERE "Date" = CURRENT_DATE - INTERVAL '1 day'
+            con.execute(text("""
+                UPDATE daily_forecast df
+                SET "RainVolume" = sub.daily_sum
+                FROM (
+                    SELECT city, "ForecastTaken", SUM("RainVolume") AS daily_sum
+                    FROM hourly_forecast
+                    WHERE "Model" = 'MetOffice'
+                      AND "Date" = CURRENT_DATE - INTERVAL '1 day'
+                    GROUP BY city, "ForecastTaken"
+                ) sub
+                WHERE df."Date" = CURRENT_DATE - INTERVAL '1 day'
+                  AND df."Model" = 'MetOffice'
+                  AND df.city = sub.city
+                  AND df."ForecastTaken" = sub."ForecastTaken"
             """))
             con.commit()
 
