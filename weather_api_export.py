@@ -139,13 +139,14 @@ def get_hourly_data(city):
                 
     max_rainfall = []
     min_rainfall = []
-    avg_rainfall = []    
-    
+    avg_rainfall = []
+    hourly_rainfall = []  # per-station total mm over the last hour (sum of 4 15-min readings)
+
     # Get DEFRA rainfall hourly data
 
     if locations[city]['country'] == 'England':
         for station in locations[city]['rainfall_stations']:
-            try:         
+            try:
                 r = requests.get("https://environment.data.gov.uk/flood-monitoring/id/stations/" + station + "/readings")
                 if r.status_code != 200:
                     log.warning(f"Unsuccessful API call for source DEFRA rainfall with status code {r.status_code}.", exc_info=True)
@@ -153,17 +154,19 @@ def get_hourly_data(city):
             except Exception as e:
                 log.warning(f"Exception occurred while fetching forecast for city {city} and source DEFRA: {e}", exc_info=True)
                 continue
-            
+
 
             try:
                 readings = r.json()['items'][-4:]
-                max_rainfall.append(max([reading['value'] for reading in readings]))
-                min_rainfall.append(min([reading['value'] for reading in readings]))
-                avg_rainfall.append(mean([reading['value'] for reading in readings]))
+                values = [reading['value'] for reading in readings]
+                max_rainfall.append(max(values))
+                min_rainfall.append(min(values))
+                avg_rainfall.append(mean(values))
+                hourly_rainfall.append(sum(values))
             except ValueError:
                 log.warning(f"ValueError occurred for station {station} in {city}.", exc_info=True)
                 continue
-    
+
     # Get welsh rainfall hourly data
 
     elif locations[city]['country'] == 'Wales':
@@ -178,13 +181,15 @@ def get_hourly_data(city):
             except Exception as e:
                 log.warning(f"Exception occurred while fetching forecast for city {city} and source Welsh: {e}", exc_info=True)
                 continue
-            
-            
+
+
             try:
                 readings = r.json()['parameterReadings'][-4:]
-                max_rainfall.append(max([reading['value'] for reading in readings]))
-                min_rainfall.append(min([reading['value'] for reading in readings]))
-                avg_rainfall.append(mean([reading['value'] for reading in readings]))
+                values = [reading['value'] for reading in readings]
+                max_rainfall.append(max(values))
+                min_rainfall.append(min(values))
+                avg_rainfall.append(mean(values))
+                hourly_rainfall.append(sum(values))
             except ValueError:
                 log.warning(f"ValueError occurred for station {station}.", exc_info=True)
                 continue
@@ -201,28 +206,32 @@ def get_hourly_data(city):
             except Exception as e:
                 log.warning(f"Exception occurred while fetching forecast for city {city} and source SEPA: {e}", exc_info=True)
                 continue
-            
+
             try:
                 readings = r.json()[-4:]
-                max_rainfall.append(max([float(reading['Value']) for reading in readings]))
-                min_rainfall.append(min([float(reading['Value']) for reading in readings]))
-                avg_rainfall.append(mean([float(reading['Value']) for reading in readings]))
+                values = [float(reading['Value']) for reading in readings]
+                max_rainfall.append(max(values))
+                min_rainfall.append(min(values))
+                avg_rainfall.append(mean(values))
+                hourly_rainfall.append(sum(values))
             except ValueError:
                 log.warning(f"ValueError occurred for station {station}.", exc_info=True)
                 continue
     else:
         log.warning(f"Invalid country for city {city}.", exc_info=True)
 
-    # Calculate max, min and average rainfall across all stations for the city
+    # Aggregate across stations: max/min are extremes, avg/hourly are city-mean.
     try:
         max_rainfall = max(max_rainfall)
         min_rainfall = min(min_rainfall)
         avg_rainfall = mean(avg_rainfall)
+        hourly_rainfall = mean(hourly_rainfall)
     except ValueError:
         log.warning(f"ValueError occurred while calculating rainfall statistics for city {city}.", exc_info=True)
         max_rainfall = None
         min_rainfall = None
         avg_rainfall = None
+        hourly_rainfall = None
 
     observation_df = pd.DataFrame(met_office_data, index = [0])[['datetime','temperature', 'wind_speed', 'wind_direction']].rename(columns={ 'temperature': 'Temperature', 'wind_speed': 'WindSpeed', 'wind_direction': 'WindDirection'})
 
@@ -230,6 +239,7 @@ def get_hourly_data(city):
     observation_df['MaxRainfall'] = max_rainfall
     observation_df['MinRainfall'] = min_rainfall
     observation_df['AvgRainfall'] = avg_rainfall
+    observation_df['HourlyRainfall'] = hourly_rainfall
 
     _dt = pd.to_datetime(observation_df['datetime'], format='ISO8601')
     observation_df['Date'] = _dt.dt.date
@@ -366,7 +376,8 @@ if __name__ == "__main__":
                 "WindDirection" TEXT,
                 "MaxRainfall" REAL,
                 "MinRainfall" REAL,
-                "AvgRainfall" REAL
+                "AvgRainfall" REAL,
+                "HourlyRainfall" REAL
             )
         """))
         con.execute(text("""
