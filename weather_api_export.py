@@ -213,7 +213,9 @@ def get_hourly_data(city):
                 max_rainfall.append(max(values))
                 min_rainfall.append(min(values))
                 avg_rainfall.append(mean(values))
-                hourly_rainfall.append(sum(values))
+                # SEPA's /Hourly/ endpoint returns mm per HOUR (not per 15 min like
+                # DEFRA/NRW). The most recent reading IS the hourly total — don't sum.
+                hourly_rainfall.append(values[-1])
             except ValueError:
                 log.warning(f"ValueError occurred for station {station}.", exc_info=True)
                 continue
