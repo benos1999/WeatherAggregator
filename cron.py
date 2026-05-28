@@ -60,6 +60,13 @@ def hourly_predict():
         logging.warning('predict_ensemble skipped: models.pkl not present yet')
         return
     run('predict_ensemble.py', timeout=180)
+    # Push the refreshed long-format snapshot to the Tableau Google Sheet.
+    # Tableau Public auto-refreshes from Sheets ~once per day; the hourly
+    # push keeps the source-of-truth fresh between those refresh cycles.
+    if os.environ.get('TABLEAU_SHEET_ID'):
+        run('sheets_export.py', timeout=120)
+    else:
+        logging.info('sheets_export skipped: TABLEAU_SHEET_ID not configured')
 
 
 def daily_train():

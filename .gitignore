@@ -10,7 +10,7 @@ postgres_reader.ipynb
 db_migrate.py
 ensemble_forecast.ipynb
 model_comparison.ipynb
-__pycahche__/
+__pycache__/
 db_cleanup_rain.py
 db_fix_sepa_rain.py
 ensemble_model.ipynb
@@ -21,3 +21,5 @@ ensemble_lib.cpython-314.pyc
 ensemble_model.ipynb
 *.pkl
 metrics.json
+oauth_client.json
+tableau_export.csv

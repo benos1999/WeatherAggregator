@@ -8,5 +8,6 @@ scikit-learn
 lightgbm
 matplotlib
 shap
-streamlit
-plotly
+gspread
+google-auth
+google-auth-oauthlib
