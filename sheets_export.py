@@ -1,5 +1,9 @@
-"""Push the denormalised long-format DataFrame to a Google Sheet, where
-Tableau Public's daily auto-refresh will pick it up.
+"""Push the Tableau Google Sheet (four tabs):
+
+  ensemble        — denormalised long-format forecast feed (per-row error)
+  metrics_daily   — per-day MAE/Bias/Coverage/Skill/Brier/conditional MAE
+  reliability     — RainProbability calibration deciles
+  ops             — model + source + observation freshness
 
 Auth uses OAuth2 *user credentials* (not a service account — Google org
 policies often disable service-account key creation). The one-time browser
@@ -11,7 +15,7 @@ Required env vars:
     GOOGLE_OAUTH_CLIENT_SECRET   — same
     GOOGLE_OAUTH_REFRESH_TOKEN   — produced by oauth_setup.py
     TABLEAU_SHEET_ID             — the long key in the sheet URL
-    TABLEAU_SHEET_TAB            — worksheet/tab name (default 'ensemble')
+    TABLEAU_SHEET_TAB            — main worksheet name (default 'ensemble')
 
 Usage:
     python sheets_export.py          # build and push using current DB state
@@ -32,11 +36,15 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from sqlalchemy import create_engine
 
+import metrics_export
 import tableau_export
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 DEFAULT_TAB = 'ensemble'
+METRICS_TAB = 'metrics_daily'
+RELIABILITY_TAB = 'reliability'
+OPS_TAB = 'ops'
 
 
 def _authorize() -> gspread.Client:
@@ -60,14 +68,16 @@ def _authorize() -> gspread.Client:
 
 
 def _df_to_values(df: pd.DataFrame) -> list[list]:
-    """Convert DataFrame to a 2D list suitable for gspread, stringifying timestamps
-    so the Sheet doesn't apply locale-dependent auto-parsing."""
+    """Convert DataFrame to a 2D list suitable for gspread, stringifying
+    timestamps so the Sheet doesn't apply locale-dependent auto-parsing."""
     out = df.copy()
     for col in ('target_datetime', 'forecast_taken'):
         if col in out.columns:
             out[col] = pd.to_datetime(out[col]).dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     if 'date' in out.columns:
-        out['date'] = pd.to_datetime(out['date']).dt.strftime('%Y-%m-%d').fillna('')
+        out['date'] = pd.to_datetime(out['date']).astype('object').where(
+            pd.to_datetime(out['date']).notna(), '')
+        out['date'] = out['date'].astype(str).str.slice(0, 10).replace('NaT', '', regex=False)
     if 'time' in out.columns:
         out['time'] = out['time'].astype('object').where(out['time'].notna(), '')
         out['time'] = out['time'].astype(str).str.replace('NaT', '', regex=False)
@@ -75,17 +85,16 @@ def _df_to_values(df: pd.DataFrame) -> list[list]:
     return [out.columns.tolist()] + out.values.tolist()
 
 
-def push_dataframe(df: pd.DataFrame, sheet_id: str, tab: str = DEFAULT_TAB) -> None:
+def push_dataframe(client: gspread.Client, df: pd.DataFrame,
+                   sheet_id: str, tab: str) -> None:
     """Clear the target tab and write the DataFrame to it. One API write call."""
-    gc = _authorize()
-    sh = gc.open_by_key(sheet_id)
+    sh = client.open_by_key(sheet_id)
     try:
         ws = sh.worksheet(tab)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(tab, rows=max(len(df) + 10, 100), cols=len(df.columns) + 1)
         log.info(f'created worksheet "{tab}"')
     values = _df_to_values(df)
-    # Grow the sheet if needed so the values fit
     needed_rows = len(values)
     needed_cols = len(values[0]) if values else 1
     if ws.row_count < needed_rows:
@@ -94,7 +103,7 @@ def push_dataframe(df: pd.DataFrame, sheet_id: str, tab: str = DEFAULT_TAB) -> N
         ws.add_cols(needed_cols - ws.col_count)
     ws.clear()
     ws.update(values=values, range_name='A1', value_input_option='RAW')
-    log.info(f'wrote {len(df):,} rows to sheet {sheet_id} / tab "{tab}"')
+    log.info(f'wrote {len(df):,} rows to tab "{tab}"')
 
 
 def main():
@@ -107,18 +116,41 @@ def main():
 
     engine = create_engine(os.environ['DATABASE_URL'])
     t0 = time.time()
-    df = tableau_export.build_long_dataframe(engine)
-    log.info(f'built long DataFrame: {len(df):,} rows in {time.time()-t0:.1f}s')
+
+    log.info('Building long-format forecast feed...')
+    parts = tableau_export.build_parts(engine)
+    long_df = parts['long']
+    efficacy_df = parts['efficacy']
+    log.info(f'  long: {len(long_df):,} rows  |  efficacy: {len(efficacy_df):,} rows '
+             f'({efficacy_df["error"].notna().sum():,} with error) — {time.time()-t0:.1f}s')
+
+    log.info('Building metrics_daily...')
+    metrics_df = metrics_export.build_metrics_daily(efficacy_df)
+    log.info(f'  metrics_daily: {len(metrics_df):,} rows')
+
+    log.info('Building reliability...')
+    reliability_df = metrics_export.build_reliability(efficacy_df)
+    log.info(f'  reliability:   {len(reliability_df):,} rows')
+
+    log.info('Building ops...')
+    ops_df = metrics_export.build_ops_metadata(engine)
+    log.info(f'  ops:           {len(ops_df):,} rows')
 
     if args.dry_run:
-        log.info('dry-run: skipping sheet push')
+        log.info(f'dry-run: skipping sheet push  (built everything in {time.time()-t0:.1f}s)')
         return
 
     sheet_id = os.environ.get('TABLEAU_SHEET_ID')
     if not sheet_id:
         raise RuntimeError('TABLEAU_SHEET_ID env var not set')
-    tab = os.environ.get('TABLEAU_SHEET_TAB', DEFAULT_TAB)
-    push_dataframe(df, sheet_id, tab)
+    main_tab = os.environ.get('TABLEAU_SHEET_TAB', DEFAULT_TAB)
+
+    client = _authorize()
+    push_dataframe(client, long_df,        sheet_id, main_tab)
+    push_dataframe(client, metrics_df,     sheet_id, METRICS_TAB)
+    push_dataframe(client, reliability_df, sheet_id, RELIABILITY_TAB)
+    push_dataframe(client, ops_df,         sheet_id, OPS_TAB)
+    log.info(f'all 4 tabs pushed in {time.time()-t0:.1f}s')
 
 
 if __name__ == '__main__':
