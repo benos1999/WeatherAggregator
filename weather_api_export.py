@@ -2,6 +2,7 @@ import os
 import requests
 import time
 import sys
+import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 from statistics import mean
@@ -147,7 +148,14 @@ def get_hourly_data(city):
     if locations[city]['country'] == 'England':
         for station in locations[city]['rainfall_stations']:
             try:
-                r = requests.get("https://environment.data.gov.uk/flood-monitoring/id/stations/" + station + "/readings")
+                # parameter=rainfall is silently ignored by /stations/{id}/readings on
+                # multi-measure stations, so we over-fetch (limit 20) and filter
+                # client-side on the measure URI. _sorted gives descending order; we
+                # take the most recent 4 rainfall readings = last hour.
+                r = requests.get(
+                    "https://environment.data.gov.uk/flood-monitoring/id/stations/" + station + "/readings",
+                    params={"_sorted": "", "_limit": "20", "parameter": "rainfall"},
+                )
                 if r.status_code != 200:
                     log.warning(f"Unsuccessful API call for source DEFRA rainfall with status code {r.status_code}.", exc_info=True)
                     raise Exception(f"Unsuccessful API call with status code {r.status_code}")
@@ -157,7 +165,15 @@ def get_hourly_data(city):
 
 
             try:
-                readings = r.json()['items'][-4:]
+                items = r.json()['items']
+                rainfall_items = [
+                    it for it in items
+                    if 'rainfall' in str(it.get('measure', '')).lower()
+                ]
+                readings = rainfall_items[:4]
+                if not readings:
+                    log.warning(f"No rainfall readings for station {station} in {city} after filtering.")
+                    continue
                 values = [reading['value'] for reading in readings]
                 max_rainfall.append(max(values))
                 min_rainfall.append(min(values))
@@ -274,18 +290,41 @@ def parse_hourly_accuweather(raw_forecast_data):
 ### ACCUWEATHER DAILY forecast parser
 
 def parse_daily_accuweather(raw_forecast_data):
-    
+
     temp_df = pd.DataFrame(raw_forecast_data['DailyForecasts'])
     daily_accuweather = pd.DataFrame()
     daily_accuweather['Date'] = pd.to_datetime(temp_df['Date'], format='ISO8601').dt.date
     daily_accuweather['ForecastTaken'] = hour_now
 
+    # Temperature.Minimum/Maximum are already full-day extrema, no Day/Night split.
     daily_accuweather['MinTemperature'] = temp_df['Temperature'].str.get('Minimum').str.get('Value').astype(float)
     daily_accuweather['MaxTemperature'] = temp_df['Temperature'].str.get('Maximum').str.get('Value').astype(float)
-    daily_accuweather['WindSpeed'] = temp_df.Day.str.get('Wind').str.get('Speed').str.get('Value').astype(float)
-    daily_accuweather['WindDirection'] = temp_df.Day.str.get('Wind').str.get('Direction').str.get('Degrees').astype(float)
-    daily_accuweather['RainProbability'] = temp_df.Day.str.get('RainProbability').astype(float)
-    daily_accuweather['RainVolume'] = temp_df.Day.str.get('Rain').str.get('Value').astype(float)
+
+    # AccuWeather splits each day into Day (~6am-6pm) and Night (~6pm-6am) blocks.
+    # Combine into single daily figures consistent with the observation aggregates:
+    #   - WindSpeed: mean of day and night (matches obs daily mean)
+    #   - WindDirection: resultant vector via sin/cos average then atan2
+    #   - RainProbability: max of day and night (matches MetOffice convention; the
+    #     observation rain target is `> 0` so a daytime-only probability would
+    #     under-represent overnight rain)
+    #   - RainVolume: day + night total (full 24h rainfall accumulation)
+    day_ws   = temp_df.Day.str.get('Wind').str.get('Speed').str.get('Value').astype(float)
+    night_ws = temp_df.Night.str.get('Wind').str.get('Speed').str.get('Value').astype(float)
+    daily_accuweather['WindSpeed'] = pd.concat([day_ws, night_ws], axis=1).mean(axis=1)
+
+    day_dir   = temp_df.Day.str.get('Wind').str.get('Direction').str.get('Degrees').astype(float)
+    night_dir = temp_df.Night.str.get('Wind').str.get('Direction').str.get('Degrees').astype(float)
+    avg_sin = (np.sin(np.deg2rad(day_dir)) + np.sin(np.deg2rad(night_dir))) / 2
+    avg_cos = (np.cos(np.deg2rad(day_dir)) + np.cos(np.deg2rad(night_dir))) / 2
+    daily_accuweather['WindDirection'] = (np.rad2deg(np.arctan2(avg_sin, avg_cos)) % 360).astype(float)
+
+    day_rp   = temp_df.Day.str.get('RainProbability').astype(float)
+    night_rp = temp_df.Night.str.get('RainProbability').astype(float)
+    daily_accuweather['RainProbability'] = pd.concat([day_rp, night_rp], axis=1).max(axis=1)
+
+    day_rv   = temp_df.Day.str.get('Rain').str.get('Value').astype(float)
+    night_rv = temp_df.Night.str.get('Rain').str.get('Value').astype(float)
+    daily_accuweather['RainVolume'] = pd.concat([day_rv, night_rv], axis=1).sum(axis=1, min_count=1)
 
     return daily_accuweather
 
@@ -458,6 +497,7 @@ if __name__ == "__main__":
         con.execute(text("DELETE FROM observations WHERE \"Date\" < NOW() - INTERVAL '365 days'"))
         con.execute(text("DELETE FROM hourly_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '365 days'"))
         con.execute(text("DELETE FROM daily_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '365 days'"))
+        con.execute(text("DELETE FROM ensemble_forecast WHERE \"ForecastTaken\" < NOW() - INTERVAL '365 days'"))
         con.commit()
     
 
