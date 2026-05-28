@@ -95,14 +95,21 @@ def build_training_matrices(engine):
     long_ = L.merge_evolution(long_, evo_h)
     log.info(f'Hourly-Long matrix:  {len(long_):,} rows, {len(long_.columns)} cols')
 
-    # ---- Daily (all 4 models, MetOffice required) ----
+    # ---- Daily (all 4 models, OpenMeteo-ECMWF required) ----
+    # OpenMeteo-ECMWF always reaches 14 days; MetOffice caps at ~7d and
+    # AccuWeather at 5d. Requiring MetOffice would cap training/prediction
+    # at 7 days; requiring OM-ECMWF lets the model learn days 8-14 too,
+    # with the MetOffice/AccuWeather columns handled as NaN by LightGBM.
     daily = L.build_pivot(raw_d, models_to_pivot=L.MODELS,
-                          require_models=['MetOffice'], hours_filter=None,
+                          require_models=['OpenMeteo-ECMWF'], hours_filter=None,
                           index_cols=L.DAILY_INDEX_COLS, value_cols=L.DAILY_VALUE_COLS)
     daily = L.add_rain_targets(daily)
     daily = L.add_time_features(daily, date_col='Date', time_col='__none__')
     daily = L.add_winddir_features(daily, L.MODELS)
     daily = L.add_city_features(daily)
+    # Presence indicators tell the model which sources are usable at each row
+    # (e.g. MetOffice=0 implies a long-range prediction where the model must
+    # lean on OpenMeteo only). Critical now that we span 1-14 day horizons.
     daily = L.add_presence_indicators(daily, L.MODELS, ref_col='fc_mintemp')
     daily = L.add_lag_features(daily, obs_all, hours_list=(24, 48, 72))
     daily = L.merge_evolution(daily, evo_d)

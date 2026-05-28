@@ -31,8 +31,8 @@ from sqlalchemy import create_engine
 MPH_TO_KMH = 1.609344
 OUTPUT_PATH = Path('tableau_export.csv')
 
-OBS_LOOKBACK_HOURS = 72
-EFFICACY_LOOKBACK_HOURS = 48
+OBS_LOOKBACK_HOURS = 168       # 1 week of past observations
+EFFICACY_LOOKBACK_HOURS = 168  # 1 week of past ensemble predictions to compare to obs
 
 COLUMNS = ['city', 'target_datetime', 'date', 'time',
            'tier', 'target', 'source', 'value',

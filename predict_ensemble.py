@@ -81,9 +81,10 @@ def build_prediction_matrices(engine):
     long_ = L.add_presence_indicators(long_, L.MODELS_LONG)
     long_ = L.merge_evolution(long_, evo_h)
 
-    # Daily
+    # Daily — see train_ensemble.build_training_matrices for the rationale
+    # behind requiring OpenMeteo-ECMWF rather than MetOffice (covers full 14d).
     daily = L.build_pivot(raw_d, models_to_pivot=L.MODELS,
-                          require_models=['MetOffice'], hours_filter=None,
+                          require_models=['OpenMeteo-ECMWF'], hours_filter=None,
                           index_cols=L.LIVE_INDEX_COLS_DAILY,
                           value_cols=L.DAILY_VALUE_COLS)
     daily = L.add_time_features(daily, date_col='Date', time_col='__none__')
