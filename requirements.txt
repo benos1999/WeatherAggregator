@@ -11,3 +11,5 @@ shap
 gspread
 google-auth
 google-auth-oauthlib
+streamlit
+plotly
