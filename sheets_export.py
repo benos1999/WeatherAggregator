@@ -1,9 +1,10 @@
-"""Push the Tableau Google Sheet (four tabs):
+"""Push the Tableau Google Sheet (five tabs):
 
-  ensemble        — denormalised long-format forecast feed (per-row error)
-  metrics_daily   — per-day MAE/Bias/Coverage/Skill/Brier/conditional MAE
-  reliability     — RainProbability calibration deciles
-  ops             — model + source + observation freshness
+  ensemble          — denormalised long-format forecast feed (per-row error)
+  metrics_daily     — per-day MAE/Bias/Coverage/Skill/Brier/conditional MAE
+  reliability       — RainProbability calibration deciles
+  ops               — model + source + observation freshness
+  horizon_accuracy  — per (tier, city, source, target, lead_bucket): n, MAE, bias
 
 Auth uses OAuth2 *user credentials* (not a service account — Google org
 policies often disable service-account key creation). The one-time browser
@@ -45,6 +46,7 @@ DEFAULT_TAB = 'ensemble'
 METRICS_TAB = 'metrics_daily'
 RELIABILITY_TAB = 'reliability'
 OPS_TAB = 'ops'
+HORIZON_TAB = 'horizon_accuracy'
 
 
 def _authorize() -> gspread.Client:
@@ -136,6 +138,10 @@ def main():
     ops_df = metrics_export.build_ops_metadata(engine)
     log.info(f'  ops:           {len(ops_df):,} rows')
 
+    log.info('Building horizon_accuracy...')
+    horizon_df = metrics_export.build_horizon_accuracy(engine)
+    log.info(f'  horizon_accuracy: {len(horizon_df):,} rows')
+
     if args.dry_run:
         log.info(f'dry-run: skipping sheet push  (built everything in {time.time()-t0:.1f}s)')
         return
@@ -150,7 +156,8 @@ def main():
     push_dataframe(client, metrics_df,     sheet_id, METRICS_TAB)
     push_dataframe(client, reliability_df, sheet_id, RELIABILITY_TAB)
     push_dataframe(client, ops_df,         sheet_id, OPS_TAB)
-    log.info(f'all 4 tabs pushed in {time.time()-t0:.1f}s')
+    push_dataframe(client, horizon_df,     sheet_id, HORIZON_TAB)
+    log.info(f'all 5 tabs pushed in {time.time()-t0:.1f}s')
 
 
 if __name__ == '__main__':

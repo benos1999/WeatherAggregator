@@ -3,7 +3,7 @@
 Pulls the latest forecasts per (city, Model), builds the same feature matrices
 as training, runs LightGBM quantile p10/p50/p90, computes per-source SHAP
 contributions, and writes one row per (city, target_datetime, ForecastTaken,
-tier, target) into the ensemble_forecast table.
+tier, measure) into the ensemble_forecast table.
 
 Usage:  python predict_ensemble.py
 """
@@ -87,7 +87,11 @@ def build_prediction_matrices(engine):
                           require_models=['OpenMeteo-ECMWF'], hours_filter=None,
                           index_cols=L.LIVE_INDEX_COLS_DAILY,
                           value_cols=L.DAILY_VALUE_COLS)
-    daily = L.add_time_features(daily, date_col='Date', time_col='__none__')
+    # NOTE: deliberately no add_time_features here. Mirrors the change in
+    # train_ensemble.build_training_matrices — doy_sin/cos over a narrow
+    # training window encodes "where in our window" not seasonality, and the
+    # model uses it to bypass the source forecasts. Re-enable once 180+ days
+    # of data have accumulated.
     daily = L.add_winddir_features(daily, L.MODELS)
     daily = L.add_city_features(daily)
     daily = L.add_presence_indicators(daily, L.MODELS, ref_col='fc_mintemp')
@@ -144,6 +148,18 @@ def predict_tier(tier, df, models_dict):
             # SHAP: explain the sin head as a representative direction signal
             explainer = shap.TreeExplainer(payload['sin']['p50'])
             shap_vals = explainer.shap_values(X)
+        elif transform == 'binary':
+            proba = payload['classifier'].predict_proba(X)[:, 1]
+            p50 = proba * 100.0
+            half = payload.get('p_band', 25.0)
+            k = float(payload.get('conformal_k', 1.0))
+            p10 = np.clip(p50 - k * half, 0, 100)
+            p90 = np.clip(p50 + k * half, 0, 100)
+            # SHAP on a binary classifier returns (positive-class) array directly
+            # in modern shap; older versions return [neg, pos]. Handle both.
+            explainer = shap.TreeExplainer(payload['classifier'])
+            sv = explainer.shap_values(X)
+            shap_vals = sv[1] if isinstance(sv, list) else sv
         else:
             p10_raw = payload['p10'].predict(X)
             p50_raw = payload['p50'].predict(X)
@@ -161,6 +177,17 @@ def predict_tier(tier, df, models_dict):
             # Enforce monotonicity row-wise — independent quantile models can cross.
             stacked = np.sort(np.column_stack([p10, p50, p90]), axis=1)
             p10, p50, p90 = stacked[:, 0], stacked[:, 1], stacked[:, 2]
+            # Conformal scaling of the band around p50 (stored at train time).
+            k = float(payload.get('conformal_k', 1.0))
+            if k != 1.0:
+                p10 = p50 - k * (p50 - p10)
+                p90 = p50 + k * (p90 - p50)
+                if target == 'RainProbability':
+                    p10 = np.clip(p10, 0, 100)
+                    p90 = np.clip(p90, 0, 100)
+                elif transform == 'log1p':
+                    p10 = np.clip(p10, 0, None)
+                    p90 = np.clip(p90, 0, None)
             explainer = shap.TreeExplainer(payload['p50'])
             shap_vals = explainer.shap_values(X)
 
@@ -169,7 +196,7 @@ def predict_tier(tier, df, models_dict):
 
         out = df[id_cols].copy()
         out['tier'] = tier
-        out['target'] = target
+        out['measure'] = target
         out['p10'] = p10
         out['p50'] = p50
         out['p90'] = p90
@@ -187,11 +214,27 @@ def write_predictions(engine, df):
     # Make sure 'Time' column exists (Daily has NaT)
     if 'Time' not in df.columns:
         df['Time'] = None
-    cols_order = ['Date', 'Time', 'city', 'ForecastTaken', 'tier', 'target',
+    cols_order = ['Date', 'Time', 'city', 'ForecastTaken', 'tier', 'measure',
                   'p10', 'p50', 'p90',
                   'shap_MetOffice', 'shap_OpenMeteo_ECMWF',
                   'shap_OpenMeteo_GFSHRRR', 'shap_AccuWeather', 'shap_other']
     df = df[cols_order]
+
+    # Clear any prior rows for the (city, ForecastTaken, tier) combinations we
+    # are about to write — without this, re-running predict_ensemble.py at the
+    # same hour appends duplicate rows that break downstream pivots in app.py.
+    fts = sorted(pd.to_datetime(df['ForecastTaken']).unique())
+    cities = sorted(df['city'].unique())
+    tiers = sorted(df['tier'].unique())
+    with engine.begin() as con:
+        con.execute(
+            text('DELETE FROM ensemble_forecast '
+                 'WHERE city = ANY(:cities) '
+                 '  AND "ForecastTaken" = ANY(:fts) '
+                 '  AND tier = ANY(:tiers)'),
+            {'cities': cities, 'fts': [pd.Timestamp(f).to_pydatetime() for f in fts], 'tiers': tiers},
+        )
+
     df.to_sql('ensemble_forecast', engine, if_exists='append', index=False)
     log.info(f'Wrote {len(df):,} rows to ensemble_forecast')
 

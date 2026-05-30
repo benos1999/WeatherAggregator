@@ -1,13 +1,13 @@
 """Build the denormalised long-format CSV that feeds the Tableau dashboard.
 
-Output schema (one row per (city, target_datetime, target, source)):
+Output schema (one row per (city, target_datetime, measure, source)):
     city               TEXT     — UK city name
     target_datetime    TIMESTAMP — the time the row describes
     date               DATE      — convenience for Tableau date hierarchies
     time               TIME      — NULL for daily-tier rows
     tier               TEXT     — Observed | Source-Hourly | Source-Daily |
                                   Ensemble-Hourly | Ensemble-Daily | Efficacy
-    target             TEXT     — Temperature | WindSpeed | WindDirection |
+    measure             TEXT     — Temperature | WindSpeed | WindDirection |
                                   RainProbability | RainVolume |
                                   MinTemperature | MaxTemperature | HourlyRainfall
     source             TEXT     — MetOffice | OpenMeteo-ECMWF | OpenMeteo-GFSHRRR |
@@ -41,7 +41,7 @@ LEAD_HOURLY_DEFAULT = 6        # hourly per-source comparison: latest forecast >
 LEAD_DAILY_DEFAULT = 24        # daily per-source comparison: latest forecast >= 24h ahead
 
 COLUMNS = ['city', 'target_datetime', 'date', 'time',
-           'tier', 'target', 'source', 'value',
+           'tier', 'measure', 'source', 'value',
            'p10', 'p90', 'forecast_taken', 'hours_ahead', 'error']
 
 
@@ -57,14 +57,12 @@ def _shape(df: pd.DataFrame) -> pd.DataFrame:
     return df[COLUMNS]
 
 
-# ---------------------------------------------------------------------------
-# Observations (last 168h)
-# ---------------------------------------------------------------------------
+# Pull last 7 days of hourly observation data
 
 def _observations(engine) -> pd.DataFrame:
     sql = """
     SELECT city,
-           ("Date" + "Time")::timestamp AS target_datetime,
+           ("Date" + "Time") AS target_datetime,
            "Date" AS date,
            "Time" AS time,
            "Temperature"    AS temperature,
@@ -74,19 +72,14 @@ def _observations(engine) -> pd.DataFrame:
     WHERE ("Date" + "Time")::timestamp > NOW() - (%(h)s::text || ' hours')::interval
     """
     raw = pd.read_sql(sql, engine, params={'mph_to_kmh': MPH_TO_KMH, 'h': str(OBS_LOOKBACK_HOURS)})
-    if raw.empty:
-        return _empty()
-    long_ = raw.melt(
+    long_format_df = raw.melt(
         id_vars=['city', 'target_datetime', 'date', 'time'],
         value_vars=['temperature', 'windspeed', 'rainfall'],
-        var_name='target', value_name='value',
-    )
-    long_['target'] = long_['target'].map({'temperature': 'Temperature',
-                                           'windspeed': 'WindSpeed',
-                                           'rainfall': 'HourlyRainfall'})
-    long_['tier'] = 'Observed'
-    long_['source'] = 'Observation'
-    return _shape(long_)
+        var_name='measure', value_name='value')
+    long_format_df['measure'] = long_format_df['measure'].map({'temperature': 'Temperature','windspeed': 'WindSpeed','rainfall': 'HourlyRainfall'})
+    long_format_df['tier'] = 'Observed'
+    long_format_df['source'] = 'Observation'
+    return _shape(long_format_df)
 
 
 # ---------------------------------------------------------------------------
@@ -101,37 +94,38 @@ def _source_hourly_latest(engine) -> pd.DataFrame:
       WHERE "ForecastTaken" > NOW() - INTERVAL '6 hours'
       GROUP BY city, "Model"
     )
-    SELECT hf.city,
-           ("Date" + "Time")::timestamp AS target_datetime,
-           hf."Date" AS date, hf."Time" AS time,
-           hf."Model" AS source,
-           hf."ForecastTaken" AS forecast_taken,
+    SELECT hourly_forecast.city,
+           ("Date" + "Time") AS target_datetime,
+           hourly_forecast."Date" AS date, hourly_forecast."Time" AS time,
+           hourly_forecast."Model" AS source,
+           hourly_forecast."ForecastTaken" AS forecast_taken,
            EXTRACT(EPOCH FROM (("Date" + "Time") - "ForecastTaken")) / 3600 AS hours_ahead,
            "Temperature" AS temperature,
-           CASE WHEN hf."Model" = 'MetOffice' THEN "WindSpeed" * %(mph_to_kmh)s
+           CASE WHEN hourly_forecast."Model" = 'MetOffice' THEN "WindSpeed" * %(mph_to_kmh)s
                 ELSE "WindSpeed" END AS windspeed,
            "WindDirection"   AS winddirection,
            "RainProbability" AS rainprobability,
            "RainVolume"      AS rainvolume
-    FROM hourly_forecast hf JOIN latest l
-      ON hf.city=l.city AND hf."Model"=l."Model" AND hf."ForecastTaken"=l.ft
-    WHERE ("Date" + "Time")::timestamp > NOW() - INTERVAL '2 hours'
+    FROM hourly_forecast
+    JOIN latest
+      ON hourly_forecast.city = latest.city AND hourly_forecast."Model" = latest."Model" AND hourly_forecast."ForecastTaken" = latest.ft
+    WHERE ("Date" + "Time") > NOW() - INTERVAL '2 hours'
     """
     raw = pd.read_sql(sql, engine, params={'mph_to_kmh': MPH_TO_KMH})
     if raw.empty:
         return _empty()
-    long_ = raw.melt(
+    long_format_df = raw.melt(
         id_vars=['city', 'target_datetime', 'date', 'time', 'source', 'forecast_taken', 'hours_ahead'],
         value_vars=['temperature', 'windspeed', 'winddirection', 'rainprobability', 'rainvolume'],
-        var_name='target', value_name='value',
+        var_name='measure', value_name='value',
     )
-    long_['target'] = long_['target'].map({'temperature': 'Temperature',
+    long_format_df['measure'] = long_format_df['measure'].map({'temperature': 'Temperature',
                                            'windspeed': 'WindSpeed',
                                            'winddirection': 'WindDirection',
                                            'rainprobability': 'RainProbability',
                                            'rainvolume': 'RainVolume'})
-    long_['tier'] = 'Source-Hourly'
-    return _shape(long_)
+    long_format_df['tier'] = 'Source-Hourly'
+    return _shape(long_format_df)
 
 
 def _source_daily_latest(engine) -> pd.DataFrame:
@@ -142,41 +136,42 @@ def _source_daily_latest(engine) -> pd.DataFrame:
       WHERE "ForecastTaken" > NOW() - INTERVAL '12 hours'
       GROUP BY city, "Model"
     )
-    SELECT df.city,
-           df."Date"::timestamp AS target_datetime,
-           df."Date" AS date,
+    SELECT daily_forecast.city,
+           daily_forecast."Date" AS target_datetime,
+           daily_forecast."Date" AS date,
            NULL::time AS time,
-           df."Model" AS source,
-           df."ForecastTaken" AS forecast_taken,
-           (df."Date" - df."ForecastTaken"::date) * 24.0 AS hours_ahead,
+           daily_forecast."Model" AS source,
+           daily_forecast."ForecastTaken" AS forecast_taken,
+           (daily_forecast."Date" - daily_forecast."ForecastTaken"::date) * 24.0 AS hours_ahead,
            "MinTemperature" AS mintemperature,
            "MaxTemperature" AS maxtemperature,
-           CASE WHEN df."Model" = 'MetOffice' THEN "WindSpeed" * %(mph_to_kmh)s
+           CASE WHEN daily_forecast."Model" = 'MetOffice' THEN "WindSpeed" * %(mph_to_kmh)s
                 ELSE "WindSpeed" END AS windspeed,
            "WindDirection"   AS winddirection,
            "RainProbability" AS rainprobability,
            "RainVolume"      AS rainvolume
-    FROM daily_forecast df JOIN latest l
-      ON df.city=l.city AND df."Model"=l."Model" AND df."ForecastTaken"=l.ft
-    WHERE df."Date" >= CURRENT_DATE
+    FROM daily_forecast JOIN latest
+      ON daily_forecast.city=latest.city AND daily_forecast."Model"=latest."Model" AND daily_forecast."ForecastTaken"=latest.ft
+    WHERE daily_forecast."Date" >= CURRENT_DATE
     """
     raw = pd.read_sql(sql, engine, params={'mph_to_kmh': MPH_TO_KMH})
     if raw.empty:
         return _empty()
-    long_ = raw.melt(
+    
+    long_format_df = raw.melt(
         id_vars=['city', 'target_datetime', 'date', 'time', 'source', 'forecast_taken', 'hours_ahead'],
         value_vars=['mintemperature', 'maxtemperature', 'windspeed',
                     'winddirection', 'rainprobability', 'rainvolume'],
-        var_name='target', value_name='value',
-    )
-    long_['target'] = long_['target'].map({'mintemperature': 'MinTemperature',
+        var_name='measure', value_name='value')
+    
+    long_format_df['measure'] = long_format_df['measure'].map({'mintemperature': 'MinTemperature',
                                            'maxtemperature': 'MaxTemperature',
                                            'windspeed': 'WindSpeed',
                                            'winddirection': 'WindDirection',
                                            'rainprobability': 'RainProbability',
                                            'rainvolume': 'RainVolume'})
-    long_['tier'] = 'Source-Daily'
-    return _shape(long_)
+    long_format_df['tier'] = 'Source-Daily'
+    return _shape(long_format_df)
 
 
 # ---------------------------------------------------------------------------
@@ -186,15 +181,15 @@ def _source_daily_latest(engine) -> pd.DataFrame:
 def _ensemble_latest(engine) -> pd.DataFrame:
     sql = """
     WITH latest AS (
-      SELECT city, target, "Time" IS NULL AS is_daily, MAX("ForecastTaken") AS ft
+      SELECT city, measure, "Time" IS NULL AS is_daily, MAX("ForecastTaken") AS ft
       FROM ensemble_forecast
       WHERE "ForecastTaken" > NOW() - INTERVAL '6 hours'
-      GROUP BY city, target, "Time" IS NULL
+      GROUP BY city, measure, "Time" IS NULL
     ),
     ef_future AS (
       SELECT ef.*
       FROM ensemble_forecast ef JOIN latest l
-        ON ef.city=l.city AND ef.target=l.target
+        ON ef.city=l.city AND ef.measure=l.measure
        AND (ef."Time" IS NULL)=l.is_daily AND ef."ForecastTaken"=l.ft
       WHERE (
         ef."Time" IS NULL AND ef."Date" >= CURRENT_DATE
@@ -205,7 +200,7 @@ def _ensemble_latest(engine) -> pd.DataFrame:
     SELECT city,
            CASE WHEN "Time" IS NULL THEN "Date"::timestamp
                 ELSE ("Date" + "Time")::timestamp END AS target_datetime,
-           "Date" AS date, "Time" AS time, target,
+           "Date" AS date, "Time" AS time, measure,
            "ForecastTaken" AS forecast_taken,
            CASE WHEN "Time" IS NULL
                 THEN ("Date" - "ForecastTaken"::date) * 24.0
@@ -231,7 +226,7 @@ def _ensemble_latest(engine) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _hourly_obs_long(engine, lookback_hours: int = EFFICACY_LOOKBACK_HOURS) -> pd.DataFrame:
-    """Hourly observations in long format keyed on (city, target_datetime, target).
+    """Hourly observations in long format keyed on (city, target_datetime, measure).
 
     Three obs metrics (Temperature, WindSpeed, RainVolume) plus a synthesised
     RainProbability obs (100 if it rained, 0 otherwise). WindDirection
@@ -248,7 +243,7 @@ def _hourly_obs_long(engine, lookback_hours: int = EFFICACY_LOOKBACK_HOURS) -> p
       WHERE ("Date" + "Time")::timestamp > NOW() - (%(h)s::text || ' hours')::interval
         AND ("Date" + "Time")::timestamp <= NOW()
     )
-    SELECT city, target_datetime, 'Temperature' AS target, temp AS obs_value FROM base WHERE temp IS NOT NULL
+    SELECT city, target_datetime, 'Temperature' AS measure, temp AS obs_value FROM base WHERE temp IS NOT NULL
     UNION ALL
     SELECT city, target_datetime, 'WindSpeed', wind FROM base WHERE wind IS NOT NULL
     UNION ALL
@@ -262,7 +257,7 @@ def _hourly_obs_long(engine, lookback_hours: int = EFFICACY_LOOKBACK_HOURS) -> p
 
 
 def _daily_obs_long(engine, lookback_days: int = 8) -> pd.DataFrame:
-    """Daily observation aggregates in long format keyed on (city, date, target)."""
+    """Daily observation aggregates in long format keyed on (city, date, measure)."""
     sql = """
     WITH daily_obs AS (
       SELECT city, "Date" AS date,
@@ -276,7 +271,7 @@ def _daily_obs_long(engine, lookback_days: int = 8) -> pd.DataFrame:
         AND "Date" <= CURRENT_DATE
       GROUP BY city, "Date"
     )
-    SELECT city, date, 'MinTemperature' AS target, mintemp AS obs_value FROM daily_obs WHERE mintemp IS NOT NULL
+    SELECT city, date, 'MinTemperature' AS measure, mintemp AS obs_value FROM daily_obs WHERE mintemp IS NOT NULL
     UNION ALL
     SELECT city, date, 'MaxTemperature', maxtemp FROM daily_obs WHERE maxtemp IS NOT NULL
     UNION ALL
@@ -294,14 +289,14 @@ def _past_ensemble_hourly(engine, lead_hourly: int = LEAD_HOURLY_DEFAULT) -> pd.
     """Past Ensemble hourly predictions at >= lead_hourly hours ahead.
 
     DISTINCT ON picks the latest qualifying ForecastTaken per
-    (city, target_datetime, target) so the comparison to per-source efficacy
+    (city, target_datetime, measure) so the comparison to per-source efficacy
     is apples-to-apples (both filtered to the same lead time)."""
     sql = """
-    SELECT DISTINCT ON (city, target_datetime, target)
+    SELECT DISTINCT ON (city, target_datetime, measure)
            city,
            ("Date" + "Time")::timestamp AS target_datetime,
            "Date" AS date, "Time" AS time,
-           target, p50 AS value, p10, p90,
+           measure, p50 AS value, p10, p90,
            "ForecastTaken" AS forecast_taken,
            EXTRACT(EPOCH FROM (("Date" + "Time") - "ForecastTaken")) / 3600 AS hours_ahead
     FROM ensemble_forecast
@@ -309,7 +304,7 @@ def _past_ensemble_hourly(engine, lead_hourly: int = LEAD_HOURLY_DEFAULT) -> pd.
       AND ("Date" + "Time")::timestamp > NOW() - (%(h)s::text || ' hours')::interval
       AND ("Date" + "Time")::timestamp <= NOW()
       AND "ForecastTaken" <= ("Date" + "Time") - (%(lead)s::text || ' hours')::interval
-    ORDER BY city, target_datetime, target, "ForecastTaken" DESC
+    ORDER BY city, target_datetime, measure, "ForecastTaken" DESC
     """
     df = pd.read_sql(sql, engine, params={
         'h': str(EFFICACY_LOOKBACK_HOURS),
@@ -324,11 +319,11 @@ def _past_ensemble_hourly(engine, lead_hourly: int = LEAD_HOURLY_DEFAULT) -> pd.
 
 def _past_ensemble_daily(engine, lead_daily: int = LEAD_DAILY_DEFAULT) -> pd.DataFrame:
     sql = """
-    SELECT DISTINCT ON (city, "Date", target)
+    SELECT DISTINCT ON (city, "Date", measure)
            city,
            "Date"::timestamp AS target_datetime,
            "Date" AS date, NULL::time AS time,
-           target, p50 AS value, p10, p90,
+           measure, p50 AS value, p10, p90,
            "ForecastTaken" AS forecast_taken,
            ("Date" - "ForecastTaken"::date) * 24.0 AS hours_ahead
     FROM ensemble_forecast
@@ -336,7 +331,7 @@ def _past_ensemble_daily(engine, lead_daily: int = LEAD_DAILY_DEFAULT) -> pd.Dat
       AND "Date" > CURRENT_DATE - (%(d)s::text || ' days')::interval
       AND "Date" <= CURRENT_DATE
       AND "ForecastTaken" <= "Date"::timestamp - (%(lead)s::text || ' hours')::interval
-    ORDER BY city, "Date", target, "ForecastTaken" DESC
+    ORDER BY city, "Date", measure, "ForecastTaken" DESC
     """
     df = pd.read_sql(sql, engine, params={
         'd': '8',
@@ -384,9 +379,9 @@ def _past_source_hourly(engine, lead_hourly: int = LEAD_HOURLY_DEFAULT) -> pd.Da
                  'forecast_taken', 'hours_ahead'],
         value_vars=['temperature', 'windspeed', 'winddirection',
                     'rainprobability', 'rainvolume'],
-        var_name='target', value_name='value',
+        var_name='measure', value_name='value',
     )
-    long_['target'] = long_['target'].map({'temperature': 'Temperature',
+    long_['measure'] = long_['measure'].map({'temperature': 'Temperature',
                                            'windspeed': 'WindSpeed',
                                            'winddirection': 'WindDirection',
                                            'rainprobability': 'RainProbability',
@@ -430,9 +425,9 @@ def _past_source_daily(engine, lead_daily: int = LEAD_DAILY_DEFAULT) -> pd.DataF
                  'forecast_taken', 'hours_ahead'],
         value_vars=['mintemperature', 'maxtemperature', 'windspeed',
                     'winddirection', 'rainprobability', 'rainvolume'],
-        var_name='target', value_name='value',
+        var_name='measure', value_name='value',
     )
-    long_['target'] = long_['target'].map({'mintemperature': 'MinTemperature',
+    long_['measure'] = long_['measure'].map({'mintemperature': 'MinTemperature',
                                            'maxtemperature': 'MaxTemperature',
                                            'windspeed': 'WindSpeed',
                                            'winddirection': 'WindDirection',
@@ -445,11 +440,11 @@ def _past_source_daily(engine, lead_daily: int = LEAD_DAILY_DEFAULT) -> pd.DataF
 def _efficacy_with_sources(engine,
                            lead_hourly: int = LEAD_HOURLY_DEFAULT,
                            lead_daily: int = LEAD_DAILY_DEFAULT) -> pd.DataFrame:
-    """Past Ensemble + per-source forecasts whose target time has passed, joined
+    """Past Ensemble + per-source forecasts whose measure time has passed, joined
     to observations to produce a signed error column.
 
-    For hourly: error keys on (city, target_datetime, target).
-    For daily:  error keys on (city, date, target).
+    For hourly: error keys on (city, target_datetime, measure).
+    For daily:  error keys on (city, date, measure).
     """
     # Hourly slice
     h_parts = [_past_ensemble_hourly(engine, lead_hourly),
@@ -462,7 +457,7 @@ def _efficacy_with_sources(engine,
             hourly_eff['target_datetime'] = pd.to_datetime(hourly_eff['target_datetime'])
             obs_h['target_datetime'] = pd.to_datetime(obs_h['target_datetime'])
             hourly_eff = hourly_eff.merge(
-                obs_h, on=['city', 'target_datetime', 'target'], how='left',
+                obs_h, on=['city', 'target_datetime', 'measure'], how='left',
             )
             hourly_eff['error'] = hourly_eff['value'] - hourly_eff['obs_value']
             hourly_eff = hourly_eff.drop(columns=['obs_value'])
@@ -478,7 +473,7 @@ def _efficacy_with_sources(engine,
             daily_eff['date'] = pd.to_datetime(daily_eff['date']).dt.date
             obs_d['date'] = pd.to_datetime(obs_d['date']).dt.date
             daily_eff = daily_eff.merge(
-                obs_d, on=['city', 'date', 'target'], how='left',
+                obs_d, on=['city', 'date', 'measure'], how='left',
             )
             daily_eff['error'] = daily_eff['value'] - daily_eff['obs_value']
             daily_eff = daily_eff.drop(columns=['obs_value'])

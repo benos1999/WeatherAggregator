@@ -24,8 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from lightgbm import LGBMRegressor
-from sklearn.metrics import mean_absolute_error
+from lightgbm import LGBMClassifier, LGBMRegressor
+from sklearn.metrics import brier_score_loss, mean_absolute_error
 from sqlalchemy import create_engine
 
 import ensemble_lib as L
@@ -44,6 +44,23 @@ LGBM_BASE_PARAMS = dict(
     random_state=0,
     verbose=-1,
 )
+
+# Tighter regularisation for Daily heads — with only a few weeks of training
+# data, the full-capacity LGBM memorises (city × doy) climatology and ignores
+# source forecasts. Smaller trees + larger leaves force broader patterns.
+DAILY_LGBM_PARAMS = dict(
+    n_estimators=150,
+    learning_rate=0.05,
+    num_leaves=15,
+    min_data_in_leaf=100,
+    n_jobs=-1,
+    random_state=0,
+    verbose=-1,
+)
+
+
+def _lgbm_params(tier: str) -> dict:
+    return DAILY_LGBM_PARAMS if tier == 'Daily' else LGBM_BASE_PARAMS
 
 
 # ---------------------------------------------------------------------------
@@ -95,16 +112,23 @@ def build_training_matrices(engine):
     long_ = L.merge_evolution(long_, evo_h)
     log.info(f'Hourly-Long matrix:  {len(long_):,} rows, {len(long_.columns)} cols')
 
-    # ---- Daily (all 4 models, OpenMeteo-ECMWF required) ----
-    # OpenMeteo-ECMWF always reaches 14 days; MetOffice caps at ~7d and
-    # AccuWeather at 5d. Requiring MetOffice would cap training/prediction
-    # at 7 days; requiring OM-ECMWF lets the model learn days 8-14 too,
-    # with the MetOffice/AccuWeather columns handled as NaN by LightGBM.
+    # ---- Daily (all 4 models as features; rows must have OpenMeteo-ECMWF) ----
+    # models_to_pivot lists the sources that BECOME FEATURES — all 4 here, so
+    # every training row has columns for MetOffice / OpenMeteo-ECMWF /
+    # OpenMeteo-GFSHRRR / AccuWeather (NaN where that source had no forecast).
+    # require_models is a ROW FILTER, not a feature filter: it drops rows where
+    # OpenMeteo-ECMWF has no forecast for the target date. OM-ECMWF is the only
+    # source that reliably reaches 14 days (MetOffice caps at ~7d, AccuWeather
+    # at 5d), so requiring it keeps every horizon-day represented in training.
     daily = L.build_pivot(raw_d, models_to_pivot=L.MODELS,
                           require_models=['OpenMeteo-ECMWF'], hours_filter=None,
                           index_cols=L.DAILY_INDEX_COLS, value_cols=L.DAILY_VALUE_COLS)
     daily = L.add_rain_targets(daily)
-    daily = L.add_time_features(daily, date_col='Date', time_col='__none__')
+    # NOTE: deliberately no add_time_features here. With < ~6 months of data,
+    # doy_sin/cos doesn't encode seasonality — it just identifies the narrow
+    # training window, and the model uses (city × doy) as a climatology lookup
+    # that crowds out the source forecasts. Re-enable once 180+ days of data
+    # have accumulated.
     daily = L.add_winddir_features(daily, L.MODELS)
     daily = L.add_city_features(daily)
     # Presence indicators tell the model which sources are usable at each row
@@ -146,28 +170,50 @@ TIER_TARGETS = {
         ('MaxTemperature',  'obs_maxtemp',         None,      'fc_maxtemp',       L.MODELS),
         ('WindSpeed',       'obs_windspeed_avg',   None,      'fc_windspeed_kmh', L.MODELS),
         ('WindDirection',   'obs_winddir',         'winddir', 'fc_winddir',       L.MODELS),
-        ('RainProbability', 'obs_rainprob',        None,      'fc_rainprob',      L.MODELS),
+        # Binary classifier rather than quantile regression: obs_rainprob is
+        # {0, 100} so quantile loss gives the trees no usable gradient (the
+        # pre-fix model literally had total_gain == 0).
+        ('RainProbability', 'obs_rainprob',        'binary',  'fc_rainprob',      L.MODELS),
         ('RainVolume',      'obs_rainvol',         'log1p',   'fc_rainvol',       L.MODELS),
     ],
 }
 
+# Initial fixed band for the binary RainProbability head (centered on the
+# predicted probability × 100). Conformal calibration tightens or widens this
+# downstream via the per-head 'conformal_k' stored alongside the model.
+BINARY_BAND_HALF_WIDTH = 25.0
 
-def _fit_quantile(X, y, alpha):
-    return LGBMRegressor(objective='quantile', alpha=alpha, **LGBM_BASE_PARAMS).fit(X, y)
+
+def _fit_quantile(X, y, alpha, params):
+    return LGBMRegressor(objective='quantile', alpha=alpha, **params).fit(X, y)
 
 
-def _train_quantile_trio(X_tr, y_tr):
+def _train_quantile_trio(X_tr, y_tr, params):
     return {
-        'p10': _fit_quantile(X_tr, y_tr, 0.1),
-        'p50': _fit_quantile(X_tr, y_tr, 0.5),
-        'p90': _fit_quantile(X_tr, y_tr, 0.9),
+        'p10': _fit_quantile(X_tr, y_tr, 0.1, params),
+        'p50': _fit_quantile(X_tr, y_tr, 0.5, params),
+        'p90': _fit_quantile(X_tr, y_tr, 0.9, params),
     }
+
+
+def _conformal_k(y_te, p10, p50, p90, target_coverage=0.8) -> float:
+    """Return scaling factor k such that p50 ± k·half_band covers
+    ~target_coverage of the holdout. Higher k = wider band."""
+    y_te = np.asarray(y_te, dtype=float)
+    band_low = np.maximum(p50 - p10, 1e-9)
+    band_high = np.maximum(p90 - p50, 1e-9)
+    score = np.maximum((p50 - y_te) / band_low, (y_te - p50) / band_high)
+    score = np.clip(score, 0, None)
+    if len(score) == 0:
+        return 1.0
+    return float(np.quantile(score, target_coverage))
 
 
 def train_one(tier, target_label, target_col, transform, source_fc_prefix,
               tier_models, train_df, test_df, feature_cols):
     """Train a single (tier, target). Returns a dict to store in models.pkl plus metrics."""
     source_feature_map = L.build_source_feature_map(feature_cols, models=tier_models)
+    params = _lgbm_params(tier)
     payload = {
         'feature_cols': feature_cols,
         'source_feature_map': source_feature_map,
@@ -187,8 +233,8 @@ def train_one(tier, target_label, target_col, transform, source_fc_prefix,
         Xtr = train_df.loc[mask_tr, feature_cols]
         Xte = test_df.loc[mask_te, feature_cols]
 
-        payload['sin'] = _train_quantile_trio(Xtr, sin_tr[mask_tr])
-        payload['cos'] = _train_quantile_trio(Xtr, cos_tr[mask_tr])
+        payload['sin'] = _train_quantile_trio(Xtr, sin_tr[mask_tr], params)
+        payload['cos'] = _train_quantile_trio(Xtr, cos_tr[mask_tr], params)
 
         sin_p50 = payload['sin']['p50'].predict(Xte)
         cos_p50 = payload['cos']['p50'].predict(Xte)
@@ -196,6 +242,51 @@ def train_one(tier, target_label, target_col, transform, source_fc_prefix,
         metrics['mae'] = L.circular_mae(test_df.loc[mask_te, target_col], angle)
         metrics['n_test'] = int(mask_te.sum())
         metrics['coverage_80'] = None  # not meaningful for circular
+
+    elif transform == 'binary':
+        # obs_rainprob is {0, 100}. Train a classifier on the {0,1} mapping;
+        # at predict, p50 = predict_proba × 100 with a fixed ±25 band that
+        # conformal calibration will tune.
+        y_tr_raw = train_df[target_col]
+        y_te_raw = test_df[target_col]
+        mask_tr = y_tr_raw.notna()
+        mask_te = y_te_raw.notna()
+        Xtr = train_df.loc[mask_tr, feature_cols]
+        Xte = test_df.loc[mask_te, feature_cols]
+        y_tr_bin = (y_tr_raw[mask_tr] > 0).astype(int).values
+        y_te_bin = (y_te_raw[mask_te] > 0).astype(int).values
+
+        clf = LGBMClassifier(objective='binary', **params).fit(Xtr, y_tr_bin)
+        payload['classifier'] = clf
+        payload['p_band'] = BINARY_BAND_HALF_WIDTH
+
+        proba = clf.predict_proba(Xte)[:, 1]
+        p50 = proba * 100.0
+        p10 = np.clip(p50 - BINARY_BAND_HALF_WIDTH, 0, 100)
+        p90 = np.clip(p50 + BINARY_BAND_HALF_WIDTH, 0, 100)
+
+        metrics['mae'] = float(mean_absolute_error(y_te_raw[mask_te], p50))
+        metrics['brier'] = float(brier_score_loss(y_te_bin, proba))
+        metrics['coverage_80'] = float(
+            ((y_te_raw[mask_te].values >= p10) & (y_te_raw[mask_te].values <= p90)).mean())
+        metrics['n_test'] = int(mask_te.sum())
+
+        best_src_mae = None
+        for fc in payload['source_fc_cols']:
+            if fc not in test_df.columns:
+                continue
+            m = mask_te & test_df[fc].notna()
+            if m.sum() == 0:
+                continue
+            src_mae = float(mean_absolute_error(y_te_raw[m], test_df.loc[m, fc]))
+            if best_src_mae is None or src_mae < best_src_mae:
+                best_src_mae = src_mae
+        metrics['best_source_mae'] = best_src_mae
+
+        payload['conformal_k'] = _conformal_k(
+            y_te_raw[mask_te].values, p10, p50, p90)
+        metrics['conformal_k'] = payload['conformal_k']
+
     else:
         y_tr_raw = train_df[target_col]
         y_te_raw = test_df[target_col]
@@ -211,7 +302,7 @@ def train_one(tier, target_label, target_col, transform, source_fc_prefix,
         else:
             y_tr_use = y_tr
 
-        payload.update(_train_quantile_trio(Xtr, y_tr_use))
+        payload.update(_train_quantile_trio(Xtr, y_tr_use, params))
 
         def _inv(arr):
             return np.clip(np.expm1(arr), 0, None) if transform == 'log1p' else arr
@@ -236,6 +327,9 @@ def train_one(tier, target_label, target_col, transform, source_fc_prefix,
             if best_src_mae is None or src_mae < best_src_mae:
                 best_src_mae = src_mae
         metrics['best_source_mae'] = best_src_mae
+
+        payload['conformal_k'] = _conformal_k(y_te.values, p10, p50, p90)
+        metrics['conformal_k'] = payload['conformal_k']
 
     return payload, metrics
 
@@ -276,7 +370,12 @@ def main():
                        else f"{metrics['coverage_80']*100:.0f}%")
             src_str = ('-' if metrics.get('best_source_mae') is None
                        else f"{metrics['best_source_mae']:.3f}")
-            log.info(f'  -> MAE {mae_str} | coverage80 {cov_str} | best_src {src_str} | n_test {metrics["n_test"]}')
+            extra = ''
+            if 'brier' in metrics:
+                extra += f' | brier {metrics["brier"]:.3f}'
+            if 'conformal_k' in metrics:
+                extra += f' | k {metrics["conformal_k"]:.2f}'
+            log.info(f'  -> MAE {mae_str} | coverage80 {cov_str} | best_src {src_str} | n_test {metrics["n_test"]}{extra}')
 
     log.info(f'Pickling {len(models_out)} (tier,target) entries to {MODELS_PATH}')
     with open(MODELS_PATH, 'wb') as f:
