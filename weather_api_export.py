@@ -1,3 +1,5 @@
+# Calls 8 different APIs to retrieve weather forecasts and observations across 10 cities. Formats data and commits to PostgreSQL database hosted on Railway. Runs on cron job hourly
+
 import os
 import requests
 import time
@@ -148,10 +150,6 @@ def get_hourly_data(city):
     if locations[city]['country'] == 'England':
         for station in locations[city]['rainfall_stations']:
             try:
-                # parameter=rainfall is silently ignored by /stations/{id}/readings on
-                # multi-measure stations, so we over-fetch (limit 20) and filter
-                # client-side on the measure URI. _sorted gives descending order; we
-                # take the most recent 4 rainfall readings = last hour.
                 r = requests.get(
                     "https://environment.data.gov.uk/flood-monitoring/id/stations/" + station + "/readings",
                     params={"_sorted": "", "_limit": "20", "parameter": "rainfall"},
@@ -296,18 +294,11 @@ def parse_daily_accuweather(raw_forecast_data):
     daily_accuweather['Date'] = pd.to_datetime(temp_df['Date'], format='ISO8601').dt.date
     daily_accuweather['ForecastTaken'] = hour_now
 
-    # Temperature.Minimum/Maximum are already full-day extrema, no Day/Night split.
     daily_accuweather['MinTemperature'] = temp_df['Temperature'].str.get('Minimum').str.get('Value').astype(float)
     daily_accuweather['MaxTemperature'] = temp_df['Temperature'].str.get('Maximum').str.get('Value').astype(float)
 
     # AccuWeather splits each day into Day (~6am-6pm) and Night (~6pm-6am) blocks.
-    # Combine into single daily figures consistent with the observation aggregates:
-    #   - WindSpeed: mean of day and night (matches obs daily mean)
-    #   - WindDirection: resultant vector via sin/cos average then atan2
-    #   - RainProbability: max of day and night (matches MetOffice convention; the
-    #     observation rain target is `> 0` so a daytime-only probability would
-    #     under-represent overnight rain)
-    #   - RainVolume: day + night total (full 24h rainfall accumulation)
+
     day_ws   = temp_df.Day.str.get('Wind').str.get('Speed').str.get('Value').astype(float)
     night_ws = temp_df.Night.str.get('Wind').str.get('Speed').str.get('Value').astype(float)
     daily_accuweather['WindSpeed'] = pd.concat([day_ws, night_ws], axis=1).mean(axis=1)
@@ -502,10 +493,6 @@ if __name__ == "__main__":
     
 
     if time.strftime("%H", time.localtime()) == '01':
-        # Populate yesterday's MetOffice daily RainVolume by summing its hourly forecasts.
-        # Correlated by (city, ForecastTaken) so each daily row gets the sum of its OWN
-        # hourly forecasts, and scoped to Model = 'MetOffice' so we don't overwrite the
-        # other sources' API-provided daily totals.
         with engine.connect() as con:
             con.execute(text("""
                 UPDATE daily_forecast df

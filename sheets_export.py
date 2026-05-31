@@ -1,9 +1,8 @@
-"""Push the Tableau Google Sheet (five tabs):
+"""Push the Tableau Google Sheet (four tabs):
 
   ensemble          — denormalised long-format forecast feed (per-row error)
-  metrics_daily     — per-day MAE/Bias/Coverage/Skill/Brier/conditional MAE
+  metrics_daily     — per-day MAE/bias per (tier, measure, source)
   reliability       — RainProbability calibration deciles
-  ops               — model + source + observation freshness
   horizon_accuracy  — per (tier, city, source, target, lead_bucket): n, MAE, bias
 
 Auth uses OAuth2 *user credentials* (not a service account — Google org
@@ -37,7 +36,6 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from sqlalchemy import create_engine
 
-import metrics_export
 import tableau_export
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -45,7 +43,6 @@ TOKEN_URI = 'https://oauth2.googleapis.com/token'
 DEFAULT_TAB = 'ensemble'
 METRICS_TAB = 'metrics_daily'
 RELIABILITY_TAB = 'reliability'
-OPS_TAB = 'ops'
 HORIZON_TAB = 'horizon_accuracy'
 
 
@@ -127,19 +124,15 @@ def main():
              f'({efficacy_df["error"].notna().sum():,} with error) — {time.time()-t0:.1f}s')
 
     log.info('Building metrics_daily...')
-    metrics_df = metrics_export.build_metrics_daily(efficacy_df)
+    metrics_df = tableau_export.build_metrics_daily(efficacy_df)
     log.info(f'  metrics_daily: {len(metrics_df):,} rows')
 
     log.info('Building reliability...')
-    reliability_df = metrics_export.build_reliability(efficacy_df)
+    reliability_df = tableau_export.build_reliability(efficacy_df)
     log.info(f'  reliability:   {len(reliability_df):,} rows')
 
-    log.info('Building ops...')
-    ops_df = metrics_export.build_ops_metadata(engine)
-    log.info(f'  ops:           {len(ops_df):,} rows')
-
     log.info('Building horizon_accuracy...')
-    horizon_df = metrics_export.build_horizon_accuracy(engine)
+    horizon_df = tableau_export.build_horizon_accuracy(engine)
     log.info(f'  horizon_accuracy: {len(horizon_df):,} rows')
 
     if args.dry_run:
@@ -155,9 +148,8 @@ def main():
     push_dataframe(client, long_df,        sheet_id, main_tab)
     push_dataframe(client, metrics_df,     sheet_id, METRICS_TAB)
     push_dataframe(client, reliability_df, sheet_id, RELIABILITY_TAB)
-    push_dataframe(client, ops_df,         sheet_id, OPS_TAB)
     push_dataframe(client, horizon_df,     sheet_id, HORIZON_TAB)
-    log.info(f'all 5 tabs pushed in {time.time()-t0:.1f}s')
+    log.info(f'all 4 tabs pushed in {time.time()-t0:.1f}s')
 
 
 if __name__ == '__main__':
