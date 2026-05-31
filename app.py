@@ -72,36 +72,87 @@ div[data-testid="stVerticalBlock"]:has(> div .daily-details-anchor) {
 """
 
 
-def _symbol_row_html(hi, rv, ws) -> str:
-    """Glanceable weather icons for a day card: colored temp gauge,
-    raindrops, wind gust. Returns inline HTML (rendered with
-    unsafe_allow_html=True). The row is centered and larger so it acts as
-    the visual anchor of the card."""
-    parts: list[str] = []
-    if hi is not None:
+_SYMBOL_PX = 56
+
+# Inline SVG glyphs. viewBox is 0 0 24 24 so width/height attrs scale them.
+# _SVG_TEMP uses currentColor so the wrapping div's `color:` tints it
+# red/grey/blue. Rain/wind hardcode their own colours.
+_SVG_TEMP = (
+    f'<svg viewBox="0 0 24 24" width="{_SYMBOL_PX}" height="{_SYMBOL_PX}" '
+    'fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12 3 a2.5 2.5 0 0 0 -2.5 2.5 v9 a4.5 4.5 0 1 0 5 0 '
+    'V5.5 a2.5 2.5 0 0 0 -2.5 -2.5 z"/>'
+    '<circle cx="12" cy="17" r="2.5" fill="currentColor" stroke="none"/>'
+    '<rect x="11" y="8" width="2" height="9" fill="currentColor" stroke="none"/>'
+    '</svg>'
+)
+_SVG_WIND = (
+    f'<svg viewBox="0 0 24 24" width="{_SYMBOL_PX}" height="{_SYMBOL_PX}" '
+    'fill="none" stroke="#7dc8e0" stroke-width="2.2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M3 7 h11 a2.5 2.5 0 1 0 -2.5 -2.5"/>'
+    '<path d="M3 12 h15 l-2.5 -2.5 m2.5 2.5 l-2.5 2.5"/>'
+    '<path d="M3 17 h11 a2.5 2.5 0 1 1 -2.5 2.5"/>'
+    '</svg>'
+)
+_SVG_RAIN_ONE = (
+    f'<svg viewBox="0 0 24 24" width="{_SYMBOL_PX}" height="{_SYMBOL_PX}">'
+    '<path d="M12 3 C8 9 6 13 6 16 a6 6 0 0 0 12 0 C18 13 16 9 12 3 Z" '
+    'fill="#2d7dd2"/>'
+    '<path d="M9 18 a3 3 0 0 0 3 2" fill="none" stroke="#e0e0e0" '
+    'stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>'
+    '</svg>'
+)
+_SVG_RAIN_TWO = (
+    f'<svg viewBox="0 0 24 24" width="{_SYMBOL_PX}" height="{_SYMBOL_PX}">'
+    '<path d="M17 3 C15 6 13.5 8.5 13.5 10.5 a3.5 3.5 0 0 0 7 0 '
+    'C20.5 8.5 19 6 17 3 Z" fill="#1f4e8c"/>'
+    '<path d="M10 8 C7 12 5 16 5 18 a5 5 0 0 0 10 0 C15 16 13 12 10 8 Z" '
+    'fill="#1f4e8c"/>'
+    '<path d="M7.5 19 a2.5 2.5 0 0 0 2.5 1.5" fill="none" stroke="#a8b0c0" '
+    'stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>'
+    '</svg>'
+)
+
+
+def _symbol_row_html(hi, rp, rv, ws) -> str:
+    """One symbol per card via priority cascade (first match wins):
+      1. wind > 40 km/h          -> wind        (overrides rain)
+      2. rp > 70 AND rv > 2      -> heavy rain
+      3. rp > 50 AND rv > 0.5    -> light rain
+      4. wind > 20 km/h          -> wind
+      5. default                 -> temperature, tinted by max-temp
+    """
+    tint = None
+    if ws is not None and ws > 40:
+        svg = _SVG_WIND
+    elif (rp is not None and rv is not None
+          and rp > 70 and rv > 2):
+        svg = _SVG_RAIN_TWO
+    elif (rp is not None and rv is not None
+          and rp > 50 and rv > 0.5):
+        svg = _SVG_RAIN_ONE
+    elif ws is not None and ws > 20:
+        svg = _SVG_WIND
+    else:
+        if hi is None:
+            return (
+                '<div style="display:flex;align-items:center;'
+                'justify-content:center;height:'
+                f'{_SYMBOL_PX}px;margin:8px 0 6px 0;">&nbsp;</div>'
+            )
         if hi > 20:
-            color = '#d63b3b'
+            tint = '#d63b3b'
         elif hi < 10:
-            color = '#3b7bd6'
+            tint = '#3b7bd6'
         else:
-            color = '#888'
-        parts.append(
-            f'<span title="{hi:.0f}°C" '
-            f'style="display:inline-block;width:10px;height:24px;'
-            f'background:{color};border-radius:5px;'
-            f'vertical-align:middle;margin-right:6px;"></span>'
-        )
-    if rv is not None:
-        if rv >= 2:
-            parts.append('💧💧💧')
-        elif rv >= 0.1:
-            parts.append('💧')
-    if ws is not None and ws > 20:
-        parts.append('💨')
-    content = ' '.join(parts) if parts else '&nbsp;'
+            tint = '#888'
+        svg = _SVG_TEMP
+    color_style = f'color:{tint};' if tint else ''
     return (
-        '<div style="text-align:center;font-size:1.7em;line-height:1.2;'
-        f'margin:6px 0 4px 0;">{content}</div>'
+        '<div style="display:flex;align-items:center;justify-content:center;'
+        f'margin:8px 0 6px 0;{color_style}">{svg}</div>'
     )
 
 
@@ -161,11 +212,15 @@ def latest_ensemble_daily_all(city: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def latest_source_daily_all(city: str) -> pd.DataFrame:
-    """Latest daily source forecast per Model, all measures, dates >= today."""
+    """Latest daily source forecast per Model, all measures, dates >= today.
+
+    No freshness filter on ForecastTaken — if the worker stops running, the
+    `Date >= CURRENT_DATE` clause naturally drops stale issues whose forecasts
+    are all in the past, while a recent-but-not-fresh issue still surfaces."""
     sql = """
     WITH latest AS (
       SELECT "Model", MAX("ForecastTaken") AS ft FROM daily_forecast
-      WHERE city = %(city)s AND "ForecastTaken" > NOW() - INTERVAL '12 hours'
+      WHERE city = %(city)s
       GROUP BY "Model"
     )
     SELECT df."Model", df."Date",
@@ -183,25 +238,30 @@ def latest_source_daily_all(city: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
-def latest_source_hourly(city: str, fc_col: str, past_hours: int = 12) -> pd.DataFrame:
-    """For each (Model, target hour) in [now - past_hours, now + 50h], take the
-    most-recent forecast issued AT OR BEFORE that target hour. Past hours show
-    what the source actually predicted at the last opportunity before they
-    occurred; future hours show the latest forecast."""
+def latest_source_hourly(city: str, fc_col: str,
+                          t_min: str, t_max: str) -> pd.DataFrame:
+    """For each (Model, target hour) in [t_min, t_max], take the most-recent
+    forecast issued AT OR BEFORE that target hour. Past targets show what the
+    source actually predicted at the last opportunity before they occurred;
+    future targets show the latest forecast.
+
+    `t_min`/`t_max` are ISO timestamp strings (UTC, naive). Passing them as
+    explicit params instead of relying on NOW() means the window can slide
+    with the ensemble's data range — important when the worker is paused and
+    the freshest data is hours old."""
     sql = f"""
     SELECT DISTINCT ON ("Model", "Date", "Time")
       "Model", "Date", "Time", "{fc_col}" AS v
     FROM hourly_forecast
     WHERE city = %(city)s
-      AND ("Date" + "Time")::timestamp
-            >= NOW() - (%(past)s::text || ' hours')::interval
-      AND ("Date" + "Time")::timestamp <= NOW() + INTERVAL '50 hours'
-      AND "ForecastTaken" >= NOW() - INTERVAL '72 hours'
+      AND ("Date" + "Time")::timestamp >= %(t_min)s::timestamp
+      AND ("Date" + "Time")::timestamp <= %(t_max)s::timestamp
+      AND "ForecastTaken" >= %(t_min)s::timestamp - INTERVAL '72 hours'
       AND "ForecastTaken" <= ("Date" + "Time")::timestamp
     ORDER BY "Model", "Date", "Time", "ForecastTaken" DESC
     """
     df = pd.read_sql(sql, get_engine(),
-                     params={'city': city, 'past': str(past_hours)})
+                     params={'city': city, 't_min': t_min, 't_max': t_max})
     if df.empty:
         return df
     df['ts'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
@@ -312,7 +372,7 @@ else:
                 rp, rv = _get(d, 'RainProbability'), _get(d, 'RainVolume')
                 ws = _get(d, 'WindSpeed')
 
-                st.markdown(_symbol_row_html(hi, rv, ws),
+                st.markdown(_symbol_row_html(hi, rp, rv, ws),
                             unsafe_allow_html=True)
 
                 if hi is not None and lo is not None:
@@ -413,12 +473,30 @@ measure = st.selectbox('Measure (hourly)', HOURLY_MEASURES,
 st.header(f'Hourly forecast — {measure}')
 
 ens_h = latest_ensemble_hourly(city, measure)
-src_h = latest_source_hourly(city, SOURCE_FC_HOURLY[measure])
 
 if ens_h.empty:
     st.warning('No ensemble forecast yet for this (city, measure).')
 else:
     now_ts = datetime.utcnow()
+    # Anchor the visible window to the ensemble data range (with the usual
+    # [now-12h, now+24h] preferred when data is fresh). Snap to whole hours so
+    # the cache key for source-hourly stays stable across reruns.
+    now_hour = pd.Timestamp(now_ts).floor('h')
+    data_min = pd.Timestamp(ens_h['ts'].min())
+    data_max = pd.Timestamp(ens_h['ts'].max())
+    x_min = min(now_hour - pd.Timedelta(hours=12), data_min)
+    x_max = max(now_hour + pd.Timedelta(hours=25), data_max)
+
+    stale_hours = (now_hour - data_max).total_seconds() / 3600
+    if stale_hours > 6:
+        st.info(
+            f'Latest ensemble forecast is **{stale_hours:.0f} h** old — '
+            'the worker may not be running. Showing what data exists; '
+            'the "now" line will be off to the right of the data.'
+        )
+
+    src_h = latest_source_hourly(city, SOURCE_FC_HOURLY[measure],
+                                  x_min.isoformat(), x_max.isoformat())
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ens_h['ts'], y=ens_h['p90'], mode='lines',
                               line=dict(color='rgba(0,100,200,0)'),
@@ -456,8 +534,6 @@ else:
                        showarrow=False, xanchor='left', yanchor='bottom',
                        font=dict(color='gray', size=11))
 
-    x_min = pd.Timestamp(now_ts) - pd.Timedelta(hours=12)
-    x_max = pd.Timestamp(now_ts) + pd.Timedelta(hours=24)
     fig.update_xaxes(range=[x_min, x_max])
 
     fig.update_layout(height=420, margin=dict(l=30, r=20, t=30, b=20),

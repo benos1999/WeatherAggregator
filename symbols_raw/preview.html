@@ -1,0 +1,109 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Symbol preview</title>
+<style>
+  body { background:#0e1117; color:#e5e7eb; font:14px/1.4 system-ui, sans-serif; padding:24px; }
+  h2 { font-weight:500; margin: 24px 0 8px; }
+  .grid { display:grid; grid-template-columns: repeat(4, max-content); gap:24px; align-items:center; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px;
+          background:#1a1d24; border-radius:8px; min-width:120px; }
+  .label { font-size:12px; color:#9aa3b2; }
+  .pair { display:flex; gap:8px; align-items:center; }
+  .card-mock { width:150px; background:#1a1d24; border:1px solid #2a2f3a; border-radius:8px;
+               padding:12px; display:flex; flex-direction:column; align-items:center; }
+  .card-mock .symbol { margin:8px 0 6px; }
+  .card-mock .temp { font-size:24px; font-weight:600; }
+  .card-mock .rain { font-weight:600; }
+  .card-mock .wind { font-size:13px; color:#9aa3b2; }
+</style>
+</head><body>
+
+<h2>Symbols rendered at 56×56 (production size)</h2>
+<div class="grid">
+
+<div class="cell"><div class="label">temp_red (hi > 20)</div>
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#d63b3b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3 a2.5 2.5 0 0 0 -2.5 2.5 v9 a4.5 4.5 0 1 0 5 0 V5.5 a2.5 2.5 0 0 0 -2.5 -2.5 z"/>
+  <circle cx="12" cy="17" r="2.5" fill="#d63b3b" stroke="none"/>
+  <rect x="11" y="8" width="2" height="9" fill="#d63b3b" stroke="none"/>
+</svg></div>
+
+<div class="cell"><div class="label">temp_grey (10–20)</div>
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3 a2.5 2.5 0 0 0 -2.5 2.5 v9 a4.5 4.5 0 1 0 5 0 V5.5 a2.5 2.5 0 0 0 -2.5 -2.5 z"/>
+  <circle cx="12" cy="17" r="2.5" fill="#888" stroke="none"/>
+  <rect x="11" y="8" width="2" height="9" fill="#888" stroke="none"/>
+</svg></div>
+
+<div class="cell"><div class="label">temp_blue (hi < 10)</div>
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#3b7bd6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3 a2.5 2.5 0 0 0 -2.5 2.5 v9 a4.5 4.5 0 1 0 5 0 V5.5 a2.5 2.5 0 0 0 -2.5 -2.5 z"/>
+  <circle cx="12" cy="17" r="2.5" fill="#3b7bd6" stroke="none"/>
+  <rect x="11" y="8" width="2" height="9" fill="#3b7bd6" stroke="none"/>
+</svg></div>
+
+<div class="cell"><div class="label">wind</div>
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#7dc8e0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 7 h11 a2.5 2.5 0 1 0 -2.5 -2.5"/>
+  <path d="M3 12 h15 l-2.5 -2.5 m2.5 2.5 l-2.5 2.5"/>
+  <path d="M3 17 h11 a2.5 2.5 0 1 1 -2.5 2.5"/>
+</svg></div>
+
+<div class="cell"><div class="label">rain_one</div>
+<svg viewBox="0 0 24 24" width="56" height="56">
+  <path d="M12 3 C8 9 6 13 6 16 a6 6 0 0 0 12 0 C18 13 16 9 12 3 Z" fill="#2d7dd2"/>
+  <path d="M9 18 a3 3 0 0 0 3 2" fill="none" stroke="#e0e0e0" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+</svg></div>
+
+<div class="cell"><div class="label">rain_two</div>
+<svg viewBox="0 0 24 24" width="56" height="56">
+  <path d="M17 3 C15 6 13.5 8.5 13.5 10.5 a3.5 3.5 0 0 0 7 0 C20.5 8.5 19 6 17 3 Z" fill="#1f4e8c"/>
+  <path d="M10 8 C7 12 5 16 5 18 a5 5 0 0 0 10 0 C15 16 13 12 10 8 Z" fill="#1f4e8c"/>
+  <path d="M7.5 19 a2.5 2.5 0 0 0 2.5 1.5" fill="none" stroke="#a8b0c0" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+</svg></div>
+
+</div>
+
+<h2>Card mockups (150px width, mimicking app.py layout)</h2>
+<div class="grid">
+
+<div class="card-mock"><div>Mon</div><div style="font-size:12px;color:#9aa3b2;">05 Jun</div>
+<div class="symbol">
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#d63b3b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3 a2.5 2.5 0 0 0 -2.5 2.5 v9 a4.5 4.5 0 1 0 5 0 V5.5 a2.5 2.5 0 0 0 -2.5 -2.5 z"/>
+  <circle cx="12" cy="17" r="2.5" fill="#d63b3b" stroke="none"/>
+  <rect x="11" y="8" width="2" height="9" fill="#d63b3b" stroke="none"/>
+</svg></div>
+<div class="temp">23° / 14°</div><div class="rain">15% · 0.1 mm</div><div class="wind">12 km/h</div>
+</div>
+
+<div class="card-mock"><div>Tue</div><div style="font-size:12px;color:#9aa3b2;">06 Jun</div>
+<div class="symbol">
+<svg viewBox="0 0 24 24" width="56" height="56">
+  <path d="M12 3 C8 9 6 13 6 16 a6 6 0 0 0 12 0 C18 13 16 9 12 3 Z" fill="#2d7dd2"/>
+  <path d="M9 18 a3 3 0 0 0 3 2" fill="none" stroke="#e0e0e0" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+</svg></div>
+<div class="temp">17° / 11°</div><div class="rain">62% · 1.2 mm</div><div class="wind">14 km/h</div>
+</div>
+
+<div class="card-mock"><div>Wed</div><div style="font-size:12px;color:#9aa3b2;">07 Jun</div>
+<div class="symbol">
+<svg viewBox="0 0 24 24" width="56" height="56">
+  <path d="M17 3 C15 6 13.5 8.5 13.5 10.5 a3.5 3.5 0 0 0 7 0 C20.5 8.5 19 6 17 3 Z" fill="#1f4e8c"/>
+  <path d="M10 8 C7 12 5 16 5 18 a5 5 0 0 0 10 0 C15 16 13 12 10 8 Z" fill="#1f4e8c"/>
+  <path d="M7.5 19 a2.5 2.5 0 0 0 2.5 1.5" fill="none" stroke="#a8b0c0" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+</svg></div>
+<div class="temp">14° / 9°</div><div class="rain">82% · 5.4 mm</div><div class="wind">22 km/h</div>
+</div>
+
+<div class="card-mock"><div>Thu</div><div style="font-size:12px;color:#9aa3b2;">08 Jun</div>
+<div class="symbol">
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#7dc8e0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 7 h11 a2.5 2.5 0 1 0 -2.5 -2.5"/>
+  <path d="M3 12 h15 l-2.5 -2.5 m2.5 2.5 l-2.5 2.5"/>
+  <path d="M3 17 h11 a2.5 2.5 0 1 1 -2.5 2.5"/>
+</svg></div>
+<div class="temp">12° / 8°</div><div class="rain">25% · 0.3 mm</div><div class="wind">45 km/h</div>
+</div>
+
+</div>
+</body></html>
