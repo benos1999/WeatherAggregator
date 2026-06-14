@@ -75,7 +75,7 @@ weather_api_export.py ──────►|  PostgreSQL DB         | ◄──�
 
 ## Results
 
-Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!]()
+Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
 
 Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
 

@@ -158,7 +158,11 @@ def _symbol_row_html(hi, rp, rv, ws) -> str:
 
 @st.cache_resource
 def get_engine():
-    return create_engine(os.environ['DATABASE_URL'])
+    return create_engine(
+        os.environ['DATABASE_URL'],
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
 
 
 @st.cache_data(ttl=300)
