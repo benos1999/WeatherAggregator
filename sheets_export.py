@@ -86,7 +86,15 @@ def _df_to_values(df: pd.DataFrame) -> list[list]:
 
 def push_dataframe(client: gspread.Client, df: pd.DataFrame,
                    sheet_id: str, tab: str) -> None:
-    """Clear the target tab and write the DataFrame to it. One API write call."""
+    """Clear the target tab and write the DataFrame to it. One API write call.
+
+    Skips the clear+write entirely when the new DataFrame is empty, so a broken
+    upstream (predict didn't run, query returned nothing) can't wipe the
+    last-good data out of the tab — the existing contents survive for Tableau."""
+    if df is None or df.empty:
+        log.warning(f'skipping push to "{tab}": new data is empty — '
+                    f'keeping existing tab contents')
+        return
     sh = client.open_by_key(sheet_id)
     try:
         ws = sh.worksheet(tab)

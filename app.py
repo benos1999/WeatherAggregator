@@ -288,6 +288,19 @@ def daily_history_weeks() -> float | None:
 
 
 @st.cache_data(ttl=300)
+def ensemble_age_hours(city: str) -> float | None:
+    """Hours since the most recent ensemble forecast for this city. None if the
+    table has no rows for the city. Used to flag a stalled prediction pipeline —
+    predict runs hourly, so a large age means the worker has stopped."""
+    sql = ('SELECT MAX("ForecastTaken") AS ft FROM ensemble_forecast '
+           'WHERE city = %(city)s')
+    res = pd.read_sql(sql, get_engine(), params={'city': city})
+    if res.empty or pd.isna(res.iloc[0]['ft']):
+        return None
+    return (datetime.utcnow() - pd.to_datetime(res.iloc[0]['ft'])).total_seconds() / 3600
+
+
+@st.cache_data(ttl=300)
 def recent_observations(city: str, measure_to_col: dict) -> pd.DataFrame:
     sql = """
     SELECT "Date", "Time", "Temperature", "WindSpeed", "HourlyRainfall"
@@ -315,6 +328,15 @@ if not cities:
     st.stop()
 
 city = st.selectbox('City', cities)
+
+# Pipeline-health banner: predict runs hourly, so anything past ~3h means the
+# worker has likely stopped and every section below is showing stale data.
+_age = ensemble_age_hours(city)
+if _age is not None and _age > 3:
+    st.warning(
+        f'Forecasts last updated **{_age:.0f} hours ago** — the prediction '
+        'pipeline may be down. Values shown may be stale.'
+    )
 
 
 # ---- Daily forecast cards (top of page) ----

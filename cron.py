@@ -30,7 +30,11 @@ STALE_AFTER = timedelta(hours=26)
 
 
 def run(script, timeout):
+    """Run a script as a subprocess. Returns True only on a clean exit (return
+    code 0); False on non-zero exit, timeout, or any unexpected error. Callers
+    use the return value to gate downstream jobs."""
     logging.info(f'--- Starting {script} ---')
+    ok = False
     try:
         result = subprocess.run(
             ['python', script],
@@ -42,6 +46,7 @@ def run(script, timeout):
             logging.info(f'{script} stdout: {result.stdout.strip()}')
         if result.returncode == 0:
             logging.info(f'Success: {script} finished.')
+            ok = True
         else:
             logging.error(f'{script} exited {result.returncode}: {result.stderr}')
     except subprocess.TimeoutExpired:
@@ -49,6 +54,7 @@ def run(script, timeout):
     except Exception as e:
         logging.error(f'Unexpected error running {script}: {e}')
     logging.info(f'--- Finished {script} ---')
+    return ok
 
 
 def hourly_export():
@@ -59,7 +65,14 @@ def hourly_predict():
     if not MODELS_PATH.exists():
         logging.warning('predict_ensemble skipped: models.pkl not present yet')
         return
-    run('predict_ensemble.py', timeout=180)
+    ok = run('predict_ensemble.py', timeout=180)
+    # Don't push to Sheets if predict failed: sheets_export overwrites every tab,
+    # so pushing now would wipe the last-good data and break the Tableau
+    # dashboards. Leave the Sheet untouched until predict recovers.
+    if not ok:
+        logging.warning('sheets_export skipped: predict failed — '
+                        'leaving last-good data in the Google Sheet')
+        return
     # Push the refreshed long-format snapshot to the Tableau Google Sheet.
     # Tableau Public auto-refreshes from Sheets ~once per day; the hourly
     # push keeps the source-of-truth fresh between those refresh cycles.

@@ -51,17 +51,9 @@ Forecasts are compared against observation data from the MetOffice. MetOffice fo
 
 Presently, this project is limited by API and cloud hosting costs. Upgraded subscriptions could offer longer forecasts and more city coverage. However, this creates plenty of room for easy expansion with more forecast models, more cities, more weather dimensions and a greater historic dataset. 
 
-## Results
-
-Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
-
-Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
-
-![alt text](image-1.png)
-
 ## Architecture
 
-T
+The system runs as two processes on Railway against a single PostgreSQL database. A **worker** handles every scheduled job — hourly API pulls, hourly ensemble predictions, the daily model retrain, and the Tableau/Sheets push — while a separate **web** process serves the Streamlit dashboard, reading from the same database. Everything is driven from `cron.py`: `weather_api_export.py` lands raw forecasts and observations at `:01`, `predict_ensemble.py` writes bias-corrected predictions at `:05` from the model trained daily at `03:01`, and `tableau_export.py` → `sheets_export.py` denormalises the results into a Google Sheet that backs the Tableau dashboards. All four tables are retained for 365 days.
 
 ```
 APIs (MetOffice / OpenMeteo / AccuWeather / DEFRA / NRW / SEPA)
@@ -82,26 +74,34 @@ weather_api_export.py ──────►|  PostgreSQL DB         | ◄──�
                         │               │ (daily 03:01)
                         │-------train_ensemble.py ──► metrics.json
 ```
+
+## Results
+
+Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
+
+Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
+
+![alt text](image-1.png)
+
 ### Summary
- 
-** SOURCES **
 
-- Rain probability cant use rain
-- 
+**Sources**
 
+- The MetOffice is the strongest single source overall, as expected from its dense network of UK weather stations; AccuWeather is the weakest, especially at longer hourly horizons (highest MAE — visible on the Tableau dashboard).
+- All four sources systematically under-predict UK rainfall — they forecast rain less often, and at lower volumes, than the observations show. This is a genuine meteorological pattern rather than a units bug, and it is the main signal the ensemble exploits through a learned positive bias correction.
 
-** MODEL **
+**Model**
 
-- Needs more time
-- Offer summary
+- The ensemble's daily heads need more history before they are production-trustworthy — the Streamlit app shows an "under-trained" banner until at least 6 weeks of training data have accumulated.
+- Full model-vs-source efficacy (MAE, bias, coverage, skill-vs-best-source) is the next dashboard build; headline numbers will be summarised here once the efficacy data has filled in.
 
 ### Issues
 
-- Defra rain issue which called forecasts from a month ago
-- Broken weather stations with crazt values
-- MetOffice overwrote every model, hence short data at TOW
-- Accuweather is ass (look at MAE)
-- Rain is overpredicted due to binary validation
+- **DEFRA rainfall** — the client returned stale readings (up to a month old) until a sort order and a `parameter` filter were added; river level/flow stations were also being mixed in with rainfall.
+- **Broken weather stations** — a handful of stations returned wildly implausible values and are now filtered out client-side.
+- **MetOffice daily rain** — an UPDATE bug briefly overwrote every model's daily rainfall with a single global value, which is why the daily history is short near the start of the window.
+- **AccuWeather accuracy** — clearly the weakest source in the MAE comparison, with the shortest horizons to boot.
+- **Rain over-prediction** — the ensemble over-predicts rain probability/volume in places, a side-effect of the binary validation target used for the daily rain-probability head.
 
 
 ## Tech Stack
