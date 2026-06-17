@@ -1,4 +1,4 @@
-# WeatherAggregator - How accurate are weather forecasts, and can they be improved?
+# WeatherAggregator - How accurate are UK weather forecasts, and can they be improved?
 
 ### Contents
 
@@ -51,7 +51,17 @@ Forecasts are compared against observation data from the MetOffice. MetOffice fo
 
 Presently, this project is limited by API and cloud hosting costs. Upgraded subscriptions could offer longer forecasts and more city coverage. However, this creates plenty of room for easy expansion with more forecast models, more cities, more weather dimensions and a greater historic dataset. 
 
+## Results
+
+Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
+
+Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
+
+![alt text](image-1.png)
+
 ## Architecture
+
+T
 
 ```
 APIs (MetOffice / OpenMeteo / AccuWeather / DEFRA / NRW / SEPA)
@@ -72,15 +82,6 @@ weather_api_export.py ──────►|  PostgreSQL DB         | ◄──�
                         │               │ (daily 03:01)
                         │-------train_ensemble.py ──► metrics.json
 ```
-
-## Results
-
-Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
-
-Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
-
-![alt text](image-1.png)
-
 ### Summary
  
 ** SOURCES **

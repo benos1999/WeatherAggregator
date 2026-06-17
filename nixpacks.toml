@@ -1,2 +1,6 @@
 [phases.setup]
-aptPkgs = ["libgomp1"]
+# LightGBM (and scipy/numpy) load libgomp.so.1 / libstdc++.so.6 at import time.
+# Provide them through Nix so they land on LD_LIBRARY_PATH for the Nix loader —
+# apt's libgomp1 installs the file but the Nix dynamic linker won't find it.
+nixLibs = ["...", "stdenv.cc.cc.lib"]
+aptPkgs = ["...", "libgomp1"]
