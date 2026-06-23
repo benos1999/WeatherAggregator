@@ -19,7 +19,7 @@ This project aims to quantify the accuracy of 4 major weather forecasting models
 
 **Data Collection / ETL:**
 
-- 6 dimensions covered: Max. Temp., Min. Temp, Rain Volume, Rain Probability, Wind Speed, Wind Direction
+- 6 dimensions covered: Max. Temp., Min. Temp., Rain Volume, Rain Probability, Wind Speed, Wind Direction
 - 10 UK cities covered: London, Manchester, Birmingham, Leeds, Norwich, Bristol, Cardiff, Glasgow, Aberdeen, Newcastle
 - Forecast APIs called and maximum horizon forecast pulled at hourly/daily intervals
 - Observation data taken from MetOffice for the previous hour in each city
@@ -28,15 +28,15 @@ This project aims to quantify the accuracy of 4 major weather forecasting models
 **Model Training:**
 
 - Data transformed to pair old forecast with observation data for that time
-- Gradient Boosted Tree model trained on following features: dimensions mentioned above, city, hours/days ahead to forecast, lag features (last 1-3 days of weather from date of forecast), weighted features from recent model performance
-- This is used to predict the 48 hour and 14 day forecast, also stored in the database
+- Gradient Boosted Tree model trained on the following features: dimensions mentioned above, city, hours/days ahead to forecast, lag features (last 1-3 days of weather from date of forecast), weighted features from recent model performance
+- This is used to predict the 48-hour and 14-day forecast, also stored in the database
 
 **Data Analysis:**
 
 - Forecast source performance is transformed into long, tidy format and exported daily to Tableau
 - Mean Absolute Error (MAE) and Bias are calculated
 - Model performance is assessed with MAE, Bias, Brier scores, and compared to single sources - Not yet implemented. Model needs time to train.
-- Model predictions are exported to streamlit user-friendly weather dashboard
+- Model predictions are exported to a user-friendly Streamlit weather dashboard
 
 The data sources were chosen for their use by major weather apps/websites:
 
@@ -47,7 +47,7 @@ The data sources were chosen for their use by major weather apps/websites:
 | OpenMeteo-ECMWF   | Apple           | 14 Days        | 48 Hours       |
 | OpenMeteo-GFSHRRR | Google          | 14 Days        | 48 Hours       |
 
-Forecasts are compared against observation data from the MetOffice. MetOffice forecasts are expected to outperform other models due to the locality factor - The MetOffice has weather stations all across the UK which can produce accurate local forecasts, whereas other sources use global weather data to create lower resolution forecasts. Major cities have been chosen as target locations, which employ aggregate forecasting already to assist this imbalance. Rainfall volume is not covered by the MetOffice API, so DEFRA, SEPA, and the Natural Resources Wales API have been used. 8 total API endpoints are called in the collection phase.
+Forecasts are compared against observation data from the MetOffice. MetOffice forecasts are expected to outperform other models due to the locality factor — the MetOffice has weather stations all across the UK which can produce accurate local forecasts, whereas other sources use global weather data to create lower-resolution forecasts. Major cities have been chosen as target locations, which employ aggregate forecasting already to assist this imbalance. Rainfall volume is not covered by the MetOffice API, so DEFRA, SEPA, and the Natural Resources Wales API have been used. 8 total API endpoints are called in the collection phase.
 
 Presently, this project is limited by API and cloud hosting costs. Upgraded subscriptions could offer longer forecasts and more city coverage. However, this creates plenty of room for easy expansion with more forecast models, more cities, more weather dimensions and a greater historic dataset. 
 
@@ -139,7 +139,7 @@ Source data quality is visualised in this [Tableau dashboard](https://public.tab
 
 ## AI Collaboration
 
-Claude Code was used to construct the ML portion of this project, including train_ensemble.py, predict_ensemble.py, the streamlit dashboard, and the functions in sheets_export concerning ensemble data. It also wrote the scripts involved in the Google Sheets --> Tableau data feed, as Tableau desktop does not support Railway-hosted Postgres as a data source.
+Claude Code was used to construct the ML portion of this project, including train_ensemble.py, predict_ensemble.py, the Streamlit dashboard, and the functions in sheets_export concerning ensemble data. It also wrote the scripts involved in the Google Sheets --> Tableau data feed, as Tableau Desktop does not support Railway-hosted Postgres as a data source.
 
 AI tools were also used in the planning and debugging of this project, as well as in-line suggestions for boilerplate code.
 
