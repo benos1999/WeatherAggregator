@@ -181,7 +181,7 @@ Streamlit dashboard
 streamlit run app.py
 ```
 
-Open http://localhost:8501. The dashboard expects at least one predict_ensemble cycle to have run.
+Open http://localhost:8080 (port is pinned in `.streamlit/config.toml`). The dashboard expects at least one predict_ensemble cycle to have run.
 
 Cron loop (mirrors Railway worker)
 

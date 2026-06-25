@@ -1,0 +1,8 @@
+[server]
+# Fixed port so the Railway web service start command is just
+# `streamlit run app.py` — no $PORT expansion (Railway passes the start
+# command without a shell, so a literal "$PORT" reaches Streamlit and fails).
+# Set the web service's Networking target port to 8080 to match.
+port = 8080
+address = "0.0.0.0"
+headless = true

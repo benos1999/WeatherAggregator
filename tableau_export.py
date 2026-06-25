@@ -170,9 +170,9 @@ def _ensemble_latest(engine):
 def _hourly_obs_long(engine, lookback_hours=efficacy_lookback_hours):
     sql = f"""
     SELECT city, ("Date" + "Time") AS target_datetime,
-           "Temperature" AS Temperature,
-           "WindSpeed" * {MPH_TO_KMH} AS WindSpeed,
-           "HourlyRainfall" AS RainVolume
+           "Temperature" AS "Temperature",
+           "WindSpeed" * {MPH_TO_KMH} AS "WindSpeed",
+           "HourlyRainfall" AS "RainVolume"
     FROM observations
     WHERE ("Date" + "Time")::timestamp > NOW() - INTERVAL '{lookback_hours} hours'
       AND ("Date" + "Time")::timestamp <= NOW()
@@ -192,10 +192,10 @@ def _hourly_obs_long(engine, lookback_hours=efficacy_lookback_hours):
 def _daily_obs_long(engine, lookback_days=daily_lookback_days):
     sql = f"""
     SELECT city, "Date" AS date,
-           MIN("Temperature") AS MinTemperature,
-           MAX("Temperature") AS MaxTemperature,
-           AVG("WindSpeed") * {MPH_TO_KMH} AS WindSpeed,
-           SUM("HourlyRainfall") AS RainVolume,
+           MIN("Temperature") AS "MinTemperature",
+           MAX("Temperature") AS "MaxTemperature",
+           AVG("WindSpeed") * {MPH_TO_KMH} AS "WindSpeed",
+           SUM("HourlyRainfall") AS "RainVolume",
            MAX("HourlyRainfall") > 0 AS rainy
     FROM observations
     WHERE "Date" > CURRENT_DATE - INTERVAL '{lookback_days} days' AND "Date" <= CURRENT_DATE

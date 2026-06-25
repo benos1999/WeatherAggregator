@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Default process. The Railway WEB service overrides this with its own
-# start command (streamlit run app.py ...); the WORKER uses this default.
+# Default process. The Railway WEB service overrides this with start command
+# `streamlit run app.py` (port/address pinned in .streamlit/config.toml — no
+# $PORT, since the start command runs without a shell to expand it). The
+# WORKER uses this default.
 CMD ["python", "cron.py"]
