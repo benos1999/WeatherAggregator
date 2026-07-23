@@ -440,16 +440,16 @@ def build_horizon_accuracy(engine):
             hf.city,
             hf."Model" AS source,
             ROUND(EXTRACT(EPOCH FROM ((hf."Date" + hf."Time") - hf."ForecastTaken")) / 3600) AS lead_bucket,
-            hf."Temperature" AS fc_Temperature,
-            CASE WHEN hf."Model" = 'MetOffice' THEN hf."WindSpeed" * {MPH_TO_KMH} ELSE hf."WindSpeed" END AS fc_WindSpeed,
-            hf."WindDirection" AS fc_WindDirection,
-            hf."RainProbability" AS fc_RainProbability,
-            hf."RainVolume" AS fc_RainVolume,
-            obs."Temperature" AS obs_Temperature,
-            obs."WindSpeed" * {MPH_TO_KMH} AS obs_WindSpeed,
-            cp."CenterDegrees" AS obs_WindDirection,
-            CASE WHEN obs."HourlyRainfall" > 0 THEN 100 ELSE 0 END AS obs_RainProbability,
-            obs."HourlyRainfall" AS obs_RainVolume
+            hf."Temperature" AS "fc_Temperature",
+            CASE WHEN hf."Model" = 'MetOffice' THEN hf."WindSpeed" * {MPH_TO_KMH} ELSE hf."WindSpeed" END AS "fc_WindSpeed",
+            hf."WindDirection" AS "fc_WindDirection",
+            hf."RainProbability" AS "fc_RainProbability",
+            hf."RainVolume" AS "fc_RainVolume",
+            obs."Temperature" AS "obs_Temperature",
+            obs."WindSpeed" * {MPH_TO_KMH} AS "obs_WindSpeed",
+            cp."CenterDegrees" AS "obs_WindDirection",
+            CASE WHEN obs."HourlyRainfall" > 0 THEN 100 ELSE 0 END AS "obs_RainProbability",
+            obs."HourlyRainfall" AS "obs_RainVolume"
         FROM hourly_forecast hf
         JOIN observations obs ON hf.city = obs.city AND hf."Date" = obs."Date" AND hf."Time" = obs."Time"
         JOIN compass_points cp ON obs."WindDirection" = cp."Direction"
@@ -491,14 +491,16 @@ def build_horizon_accuracy(engine):
         SELECT
             df.city, df."Model" AS source,
             (df."Date" - df."ForecastTaken"::date) AS lead_bucket,
-            df."MinTemperature" AS fc_MinTemperature,
-            df."MaxTemperature" AS fc_MaxTemperature,
-            CASE WHEN df."Model" = 'MetOffice' THEN df."WindSpeed" * {MPH_TO_KMH} ELSE df."WindSpeed" END AS fc_WindSpeed,
-            df."RainProbability" AS fc_RainProbability,
-            df."RainVolume" AS fc_RainVolume,
-            d_obs.obs_MinTemperature, d_obs.obs_MaxTemperature, d_obs.obs_WindSpeed,
-            CASE WHEN d_obs.rain_any > 0 THEN 100 ELSE 0 END AS obs_RainProbability,
-            d_obs.obs_RainVolume
+            df."MinTemperature" AS "fc_MinTemperature",
+            df."MaxTemperature" AS "fc_MaxTemperature",
+            CASE WHEN df."Model" = 'MetOffice' THEN df."WindSpeed" * {MPH_TO_KMH} ELSE df."WindSpeed" END AS "fc_WindSpeed",
+            df."RainProbability" AS "fc_RainProbability",
+            df."RainVolume" AS "fc_RainVolume",
+            d_obs.obs_MinTemperature AS "obs_MinTemperature",
+            d_obs.obs_MaxTemperature AS "obs_MaxTemperature",
+            d_obs.obs_WindSpeed AS "obs_WindSpeed",
+            CASE WHEN d_obs.rain_any > 0 THEN 100 ELSE 0 END AS "obs_RainProbability",
+            d_obs.obs_RainVolume AS "obs_RainVolume"
         FROM daily_forecast df
         JOIN daily_obs d_obs ON df.city = d_obs.city AND df."Date" = d_obs."Date"
         WHERE (df."Date" - df."ForecastTaken"::date) > 0

@@ -10,7 +10,6 @@ Boot also triggers a one-off retrain if models.pkl is missing or older than 26h
 """
 
 import logging
-import os
 import subprocess
 import sys
 import time
@@ -66,20 +65,18 @@ def hourly_predict():
         logging.warning('predict_ensemble skipped: models.pkl not present yet')
         return
     ok = run('predict_ensemble.py', timeout=180)
-    # Don't push to Sheets if predict failed: sheets_export overwrites every tab,
-    # so pushing now would wipe the last-good data and break the Tableau
-    # dashboards. Leave the Sheet untouched until predict recovers.
+    # Don't refresh metrics if predict failed: metrics_to_postgres replaces each
+    # table, so running now on stale inputs adds no value. metrics_to_postgres
+    # also skips any table whose build came back empty, keeping last-good data
+    # for Power BI. Leave the metrics untouched until predict recovers.
     if not ok:
-        logging.warning('sheets_export skipped: predict failed — '
-                        'leaving last-good data in the Google Sheet')
+        logging.warning('metrics_to_postgres skipped: predict failed — '
+                        'leaving last-good metrics tables in Postgres')
         return
-    # Push the refreshed long-format snapshot to the Tableau Google Sheet.
-    # Tableau Public auto-refreshes from Sheets ~once per day; the hourly
-    # push keeps the source-of-truth fresh between those refresh cycles.
-    if os.environ.get('TABLEAU_SHEET_ID'):
-        run('sheets_export.py', timeout=120)
-    else:
-        logging.info('sheets_export skipped: TABLEAU_SHEET_ID not configured')
+    # Rebuild the model-quality metric tables (efficacy, metrics_daily,
+    # reliability, horizon_accuracy) so Power BI picks them up on its next
+    # refresh. Reads/writes Postgres over the private network — no egress.
+    run('metrics_to_postgres.py', timeout=180)
 
 
 def daily_train():
