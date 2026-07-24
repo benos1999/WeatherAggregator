@@ -27,3 +27,7 @@ HOW_THE_MODEL_WORKS.md
 metrics.json
 TABLEAU_DASHBOARDS.md
 PROJECT_HISTORY.md
+sheets_export.py
+tableau_export.py
+oauth_client.json
+oauth_setup.py
