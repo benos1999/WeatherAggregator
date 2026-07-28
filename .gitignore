@@ -31,8 +31,8 @@ sheets_export.py
 tableau_export.py
 oauth_client.json
 oauth_setup.py
-__pycache__/
-.streamlit/
+/__pycache__/
+/.streamlit/
 .dockerignore
 Dockerfile
 sheets_export.py
