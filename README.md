@@ -53,7 +53,7 @@ Presently, this project is limited by API and cloud hosting costs. Upgraded subs
 
 ## Architecture
 
-The system runs as two processes on Railway against a single PostgreSQL database. A **worker** handles every scheduled job — hourly API pulls, hourly ensemble predictions, the daily model retrain, and the Tableau/Sheets push — while a separate **web** process serves the Streamlit dashboard, reading from the same database. Everything is driven from `cron.py`: `weather_api_export.py` lands raw forecasts and observations at `:01`, `predict_ensemble.py` writes bias-corrected predictions at `:05` from the model trained daily at `03:01`, and `tableau_export.py` → `sheets_export.py` denormalises the results into a Google Sheet that backs the Tableau dashboards. All four tables are retained for 365 days.
+The system runs as two processes on Railway against a single PostgreSQL database. A **worker** handles every scheduled job — hourly API pulls, hourly ensemble predictions, the daily model retrain, and the Tableau/Sheets push — while a separate **web** process serves the Streamlit dashboard, reading from the same database. Everything is driven from `cron.py`: `weather_api_export.py` lands raw forecasts and observations at `:01`, `predict_ensemble.py` writes bias-corrected predictions at `:05` from the model trained daily at `03:01`.
 
 ```
 APIs (MetOffice / OpenMeteo / AccuWeather / DEFRA / NRW / SEPA)
@@ -63,13 +63,13 @@ APIs (MetOffice / OpenMeteo / AccuWeather / DEFRA / NRW / SEPA)
 weather_api_export.py ──────►|  PostgreSQL DB         | ◄─── reads ── app.py ──► Streamlit web dashboard
                              |  ├── observations      |           
                              |  ├── hourly_forecast   |            
-                        |──► |  ├── daily_forecast    | ◄─── reads (Hourly, retained for 365 days)
-                        │    |  └── ensemble_forecast |        |
-                        │    |------------------------|        │
-                      reads             ▲                  tableau_export.py
-                        │               │ (hourly :05)         │ 
-                        │      predict_ensemble.py             ▼
-                        │               ▲                   sheets_export.py ──► Google Sheet ──► Tableau dashboard
+                        |──► |  ├── daily_forecast    | ◄─── reads (Hourly, retained for 365 days) ──► Power BI d
+                        │    |  └── ensemble_forecast |        
+                        │    |------------------------|        
+                      reads             ▲                  
+                        │               │ (hourly :05)         
+                        │      predict_ensemble.py             
+                        │               ▲                    
                         │               │ models.pkl                                     
                         │               │ (daily 03:01)
                         │-------train_ensemble.py ──► metrics.json
@@ -79,7 +79,9 @@ weather_api_export.py ──────►|  PostgreSQL DB         | ◄──�
 
 Ensemble LightGBM model predictions can be viewed in this Streamlit app [here!](https://streamlit-production-6256.up.railway.app/)
 
-Source data quality is visualised in this [Tableau dashboard](https://public.tableau.com/views/WeatherAggregator/Dashboard1?:language=en-GB&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link).
+Source data quality and model performance are visualised in this [Power BI dashboard](https://app.powerbi.com/view?r=eyJrIjoiMDAzOGY2OWEtNDdkYy00ZDkwLWFmYWUtNTY5OTZmYTg2NjFjIiwidCI6IjBmZjIyZjRlLWU2MzktNGQ4NC04MWUyLWEyYTY2NDBiMTI4YSJ9).
+
+![alt text](image.png)
 
 ![alt text](image-1.png)
 
@@ -92,8 +94,8 @@ Source data quality is visualised in this [Tableau dashboard](https://public.tab
 
 **Model**
 
-- The ensemble's daily heads need more history before they are production-trustworthy — the Streamlit app shows an "under-trained" banner until at least 6 weeks of training data have accumulated.
-- Full model-vs-source efficacy (MAE, bias, coverage, skill-vs-best-source) is the next dashboard build; headline numbers will be summarised here once the efficacy data has filled in.
+- The ensemble model shows improvements in Daily Min Temperature, Rain Volume, Hourly Temperature and wind speed than the best forecast alone.
+- For Max Temperature and Rain Probability, the model is actually worse than most forecasts alone. This liekly points towards a structural error rather than poor performance - the model seems to only predict 100% or 0% probability.
 
 ### Issues
 
@@ -110,7 +112,7 @@ Source data quality is visualised in this [Tableau dashboard](https://public.tab
 - **Database:** PostgreSQL on Railway, SQLAlchemy 2.x
 - **ML:** LightGBM (quantile + binary classifier heads), scikit-learn, SHAP, conformal calibration
 - **Data:** pandas, NumPy
-- **Web / dashboards:** Streamlit (Plotly), Tableau Public
+- **Web / dashboards:** Streamlit (Plotly), Power BI
 - **External APIs:** Met Office DataHub, Open-Meteo, AccuWeather, DEFRA/NRW/SEPA rainfall
 - **Auth / integrations:** OAuth2 (gspread), google-auth for the Sheets feed
 - **Scheduling:** `schedule` library on a Railway worker process
@@ -126,8 +128,6 @@ Source data quality is visualised in this [Tableau dashboard](https://public.tab
 
 **Surfaces**
 - `app.py` — Streamlit dashboard (the `web:` process on Railway)
-- `tableau_export.py` — long-format DataFrame for the Tableau Sheet feed
-- `sheets_export.py` — pushes 4 tabs to the Google Sheet (OAuth2 user creds)
 
 **Shared**
 - `ensemble_lib.py` — feature engineering shared between train + predict + app
